@@ -17,4 +17,5 @@ func NewStar(name, starType string, mass float64) Star {
 // Info prints information about the Star.
 func (s Star) Info() {
     fmt.Printf("Star Name: %s\nType: %s\nMass: %f\n", s.Name, s.Type, s.Mass)
+    fmt.Println("Done")
 }
