@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 
 	// sqlite "github.com/ytsruh/gorm-libsql"
@@ -11,20 +13,45 @@ import (
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
 
 	_ "github.com/SiriusScan/go-api/sirius/host"
+	"github.com/SiriusScan/go-api/sirius/store"
+	_ "github.com/SiriusScan/go-api/sirius/store"
 	"github.com/SiriusScan/go-api/nvd"
 )
 
 var db *gorm.DB
 
 func main() {
-	log.Println("Entering Tests")
 	
-	cve, err := nvd.GetCVE("CVE-2017-0143")
+	cve, err := nvd.GetCVE("CVE-2019-12111")
 	if err != nil {
-		log.Fatalf("Failed test: %v", err)
+		log.Fatalf("test %v", cve)
 	}
-	log.Println(cve.Descriptions)
+	log.Println(cve)
+	
+	// Completed Tests
+	// KVStoreTest()
+	// MigrateTables(db)
+}
 
+
+func KVStoreTest() {
+	kvStore, err := store.NewValkeyStore()
+	if err != nil {
+		log.Fatalf("Error creating KV store: %v", err)
+	}
+	defer kvStore.Close()
+	ctx := context.Background()
+
+	if err := kvStore.SetValue(ctx, "key", "val"); err != nil {
+		log.Fatalf("Error setting value: %v", err)
+	}
+
+	val, err := kvStore.GetValue(ctx, "currentScan")
+	if err != nil {
+		log.Fatalf("Error getting value: %v", err)
+	}
+
+	fmt.Println("Retrieved value:", val)
 }
 
 func MigrateTables(db *gorm.DB) error {
@@ -33,17 +60,17 @@ func MigrateTables(db *gorm.DB) error {
 
 	// Create test table
 	// func GetHost(db *gorm.DB, ip string) (models.Host, error) {
-		// var host models.Host
-		// result := db.Preload("Ports").Preload("Vulnerabilities").Where("ip = ?", ip).First(&host)
-		// if result.Error != nil {
-		// 	return models.Host{}, result.Error
-		// }
+	// var host models.Host
+	// result := db.Preload("Ports").Preload("Vulnerabilities").Where("ip = ?", ip).First(&host)
+	// if result.Error != nil {
+	// 	return models.Host{}, result.Error
+	// }
 
-		// fmt.Printf("Host retrieved: \n", host.IP)
-		// fmt.Printf("=====================")
+	// fmt.Printf("Host retrieved: \n", host.IP)
+	// fmt.Printf("=====================")
 
-		// fmt.Println(host)
-		// return host, nil
+	// fmt.Println(host)
+	// return host, nil
 
 	return nil
 

@@ -8,6 +8,10 @@ import (
 // MessageProcessor is a type for functions that can process messages.
 type MessageProcessor func(msg string)
 
+const (
+	SIRIUS_RABBITMQ = "amqp://guest:guest@sirius-rabbitmq:5672/"
+)
+
 // failOnError is a helper function to log any errors.
 func failOnError(err error, msg string) {
 	if err != nil {
@@ -18,8 +22,8 @@ func failOnError(err error, msg string) {
 // Listen listens to a RabbitMQ queue specified by qName and processes messages using the provided messageProcessor function.
 func Listen(qName string, messageProcessor MessageProcessor) {
 	log.Printf("Listening to queue %s", qName)
-
-	conn, err := amqp.Dial("amqp://guest:guest@sirius-rabbitmq:5672/")
+	
+	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
@@ -60,7 +64,7 @@ func Listen(qName string, messageProcessor MessageProcessor) {
 
 // Send sends a message to a RabbitMQ queue specified by qName.
 func Send(qName string, message string) error {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
 	if err != nil {
 		return err
 	}
