@@ -2,6 +2,7 @@ package queue
 
 import (
 	"log"
+
 	"github.com/streadway/amqp"
 )
 
@@ -21,8 +22,8 @@ func failOnError(err error, msg string) {
 
 // Listen listens to a RabbitMQ queue specified by qName and processes messages using the provided messageProcessor function.
 func Listen(qName string, messageProcessor MessageProcessor) {
-	log.Printf("Listening to queue %s", qName)
-	
+	log.Printf("Listening to queue: %s", qName)
+
 	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
@@ -33,8 +34,8 @@ func Listen(qName string, messageProcessor MessageProcessor) {
 
 	q, err := ch.QueueDeclare(
 		qName, // name
-		false, // durable
-		false, // delete when unused
+		false, // durable - match TypeScript
+		false, // auto-delete
 		false, // exclusive
 		false, // no-wait
 		nil,   // arguments

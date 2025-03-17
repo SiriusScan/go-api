@@ -1,24 +1,34 @@
 package host
 
 import (
+	"fmt"
+	"log"
+
 	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres"
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 )
 
 func GetHost(ip string) (sirius.Host, error) {
-	// fmt.Printf("Adding or updating host %s in database\n", ip)
-
 	db := postgres.GetDB()
 
-	dbHost, err := postgres.GetHost(db, ip)
-	if err != nil {
-		return sirius.Host{}, err
+	// Check if database is available
+	if db == nil {
+		log.Printf("Warning: Database not available, cannot retrieve host %s", ip)
+		return sirius.Host{IP: ip}, fmt.Errorf("database connection not available")
 	}
 
-	return MapDBHostToSiriusHost(dbHost), nil
-	// mockHost := sirius.Host{}
-	// return mockHost, nil
+	var dbHost models.Host
+	result := db.Preload("Ports").Preload("Vulnerabilities").Preload("Services").Where("ip = ?", ip).First(&dbHost)
+
+	if result.Error != nil {
+		return sirius.Host{}, result.Error
+	}
+
+	// Map the database host to a sirius.Host
+	host := MapDBHostToSiriusHost(dbHost)
+
+	return host, nil
 }
 
 func GetAllHosts() ([]sirius.Host, error) {
@@ -72,7 +82,7 @@ func GetHostRiskStatistics(ip string) (HostRiskStats, error) {
 	if err != nil {
 		return stats, err
 	}
-	
+
 	stats.HostSeverityCounts, err = GetHostVulnerabilitySeverityCounts(ip)
 	if err != nil {
 		return stats, err
@@ -170,10 +180,19 @@ func GetAllVulnerabilities() ([]VulnerabilitySummary, error) {
 
 // AddHost Chain: SDK Consumer (e.g. Sirius REST API) -> SDK go-api sirius/host (Here)
 func AddHost(host sirius.Host) error {
-	// fmt.Printf("Adding or updating host %s in database\n", host.IP)
+	log.Printf("Adding or updating host %s in database", host.IP)
 
-	dbHost := MapSiriusHostToDBHost(host)
+	// Get a database connection
 	db := postgres.GetDB()
+
+	// Check if database is available
+	if db == nil {
+		log.Printf("Warning: Database not available, cannot save host %s", host.IP)
+		return fmt.Errorf("database connection not available")
+	}
+
+	// Map the host to a database model
+	dbHost := MapSiriusHostToDBHost(host)
 
 	// Create a separate host for the Where clause
 	whereHost := models.Host{IP: dbHost.IP}
@@ -183,24 +202,44 @@ func AddHost(host sirius.Host) error {
 	result := db.Where(&whereHost).First(&existingHost)
 
 	// If a record was found, update it
-	//  (Only updates vuln??)
 	if result.RowsAffected > 0 {
+		log.Printf("Updating existing host record for %s", host.IP)
+
 		err := db.Model(&existingHost).Updates(&dbHost).Error
 		if err != nil {
-			return err
+			log.Printf("Error updating host %s: %v", host.IP, err)
+			return fmt.Errorf("error updating host: %w", err)
 		}
-		// Update many-to-many relationship
+
+		// Update many-to-many relationships for both vulnerabilities and ports
+		// First update vulnerabilities
 		err = db.Model(&existingHost).Association("Vulnerabilities").Replace(dbHost.Vulnerabilities)
 		if err != nil {
-			return err
+			log.Printf("Error updating host-vulnerability associations for %s: %v", host.IP, err)
+			return fmt.Errorf("error updating host-vulnerability associations: %w", err)
 		}
+
+		// Then update ports
+		err = db.Model(&existingHost).Association("Ports").Replace(dbHost.Ports)
+		if err != nil {
+			log.Printf("Error updating host-port associations for %s: %v", host.IP, err)
+			return fmt.Errorf("error updating host-port associations: %w", err)
+		}
+
+		log.Printf("Successfully updated host %s and its relationships", host.IP)
 	} else {
 		// If no record was found, create a new one
+		log.Printf("Creating new host record for %s", host.IP)
+
 		err := db.Create(&dbHost).Error
 		if err != nil {
-			return err
+			log.Printf("Error creating host %s: %v", host.IP, err)
+			return fmt.Errorf("error creating host: %w", err)
 		}
+
+		log.Printf("Successfully created host %s", host.IP)
 	}
+
 	return nil
 }
 
@@ -384,47 +423,102 @@ func MapDBHostToSiriusHost(dbHost models.Host) sirius.Host {
 }
 
 func MapSiriusHostToDBHost(siriusHost sirius.Host) models.Host {
-	// db := postgres.GetDB()
+	db := postgres.GetDB() // Enable DB connection to look up existing records
 
-	// Map Ports
+	// Initialize empty return value in case of database issues
+	dbHost := models.Host{
+		HID:       siriusHost.HID,
+		OS:        siriusHost.OS,
+		OSVersion: siriusHost.OSVersion,
+		IP:        siriusHost.IP,
+		Hostname:  siriusHost.Hostname,
+	}
+
+	// If we have no database connection, return basic host without relationship data
+	if db == nil {
+		log.Printf("Warning: Database connection not available in MapSiriusHostToDBHost for IP %s", siriusHost.IP)
+		return dbHost
+	}
+
+	// Map Ports from sirius.Host to models.Host
 	var dbPorts []models.Port
 	for _, port := range siriusHost.Ports {
-		dbPort := models.Port{
-			ID: port.ID,
+		// Try to find an existing port by ID and protocol
+		var existingPort models.Port
+		result := db.Where("id = ? AND protocol = ?", port.ID, port.Protocol).First(&existingPort)
+
+		if result.RowsAffected > 0 {
+			// Use the existing port if found
+			dbPorts = append(dbPorts, existingPort)
+		} else {
+			// Otherwise create a new port entry
+			dbPort := models.Port{
+				ID:       port.ID,
+				Protocol: port.Protocol,
+				State:    port.State,
+			}
+			dbPorts = append(dbPorts, dbPort)
 		}
-		dbPorts = append(dbPorts, dbPort)
 	}
+
+	// Update our return value with found ports
+	dbHost.Ports = dbPorts
 
 	// Map Services (assuming Service has a Name field)
 	var dbServices []models.Service
 	// ! Address dbServices later
 
+	// Update our return value with found services
+	dbHost.Services = dbServices
+
 	// Map sirius.Vulnerabilities to models.Host.Vulnerabilities
 	var dbVulnerabilities []models.Vulnerability
 	for _, vulnerability := range siriusHost.Vulnerabilities {
-		existingVuln := models.Vulnerability{
-			VID:         vulnerability.Title,
+		// Skip empty vulnerabilities
+		if vulnerability.VID == "" {
+			continue
+		}
+
+		// Create a vulnerability instance to look up
+		var existingVuln models.Vulnerability
+
+		// Try to find existing vulnerability by v_id field (must use column name)
+		result := db.Where("v_id = ?", vulnerability.VID).First(&existingVuln)
+		if result.RowsAffected > 0 {
+			// Use the existing vulnerability if found
+			dbVulnerabilities = append(dbVulnerabilities, existingVuln)
+			continue
+		}
+
+		// If we can't find by VID, try title as a fallback
+		result = db.Where("title = ?", vulnerability.Title).First(&existingVuln)
+		if result.RowsAffected > 0 {
+			// Use the existing vulnerability if found
+			dbVulnerabilities = append(dbVulnerabilities, existingVuln)
+			continue
+		}
+
+		// If vulnerability doesn't exist yet, create a new one
+		newVuln := models.Vulnerability{
+			VID:         vulnerability.VID,
 			Description: vulnerability.Description,
 			Title:       vulnerability.Title,
 			RiskScore:   vulnerability.RiskScore,
 		}
-		// Find each vulnerability by VID
-		// if err := db.Where("v_id = ?", vulnerability.Title).First(&existingVuln).Error; err != nil {
-		// 	log.Printf("Warning: [MapSiriusHostToDBHost] Vulnerability with VID '%s' not found in database, skipping...\n", vulnerability.Title)
-		// 	continue // Skip this vulnerability
-		// }
-		dbVulnerabilities = append(dbVulnerabilities, existingVuln)
+
+		// Save the new vulnerability to get an ID
+		if err := db.Create(&newVuln).Error; err == nil {
+			dbVulnerabilities = append(dbVulnerabilities, newVuln)
+		} else {
+			log.Printf("Failed to create vulnerability %s: %v", vulnerability.VID, err)
+		}
 	}
 
-	return models.Host{
-		OS:              siriusHost.OS,
-		OSVersion:       siriusHost.OSVersion,
-		IP:              siriusHost.IP,
-		Hostname:        siriusHost.Hostname,
-		Ports:           dbPorts,
-		Services:        dbServices,
-		Vulnerabilities: dbVulnerabilities,
-	}
+	// Update our return value with found vulnerabilities
+	dbHost.Vulnerabilities = dbVulnerabilities
+
+	// Return the host with all relationships set up
+	return dbHost
 }
 
 // MapDBVulnerabilityToSiriusVulnerability maps a models.Vulnerability to a sirius.Vulnerability

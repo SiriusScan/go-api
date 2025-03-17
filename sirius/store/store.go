@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
 
 	"github.com/valkey-io/valkey-go"
 )
@@ -47,14 +47,28 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 	cmd := s.client.B().Get().Key(key).Build()
 	resp := s.client.Do(ctx, cmd)
 	var val ValkeyResponse
+
 	if err := resp.Error(); err != nil {
 		return val, err
 	}
-	err := json.Unmarshal([]byte(resp.String()), &val)
-	if err != nil {
-		log.Fatalf("Error unmarshalling ValkeyResponse: %v", err)
+
+	// Handle empty response
+	respStr := resp.String()
+	if respStr == "" {
+		return val, fmt.Errorf("key not found")
 	}
-	log.Println(val)
+
+	err := json.Unmarshal([]byte(respStr), &val)
+	if err != nil {
+		// If unmarshaling fails, try to create a response with the raw value
+		val = ValkeyResponse{
+			Message: ValkeyValue{
+				Value: respStr,
+			},
+		}
+		return val, nil
+	}
+
 	return val, nil
 }
 
@@ -85,6 +99,8 @@ type ScanResult struct {
 	Status          string                 `json:"status"`
 	Targets         []string               `json:"targets"`
 	Hosts           []string               `json:"hosts"`
-	HostsCompleted  int                    `json:"hostsCompleted"`
+	HostsCompleted  int                    `json:"hosts_completed"`
 	Vulnerabilities []VulnerabilitySummary `json:"vulnerabilities"`
+	StartTime       string                 `json:"start_time"`
+	EndTime         string                 `json:"end_time,omitempty"`
 }

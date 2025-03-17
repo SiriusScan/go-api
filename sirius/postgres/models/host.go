@@ -12,7 +12,7 @@ type Host struct {
 	OSVersion       string
 	IP              string `gorm:"uniqueIndex"`
 	Hostname        string
-	Ports           []Port
+	Ports           []Port `gorm:"many2many:host_ports"`
 	Services        []Service
 	Vulnerabilities []Vulnerability `gorm:"many2many:host_vulnerabilities"`
 	CPEs            []CPE
@@ -26,7 +26,13 @@ type Port struct {
 	ID       int
 	Protocol string
 	State    string
-	HostID   uint // Foreign key to link back to CVEItem
+	Hosts    []Host `gorm:"many2many:host_ports"`
+}
+
+type HostPort struct {
+	gorm.Model
+	HostID uint
+	PortID uint
 }
 
 type Service struct {
