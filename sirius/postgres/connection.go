@@ -21,16 +21,16 @@ var (
 )
 
 // Database configuration
-const (
-	maxRetries = 5
-	retryDelay = 3 * time.Second
-)
+// const (
+// 	maxRetries = 5
+// 	retryDelay = 3 * time.Second
+// )
 
 // getConnectionString returns the appropriate connection string based on environment
 func getConnectionString() string {
 	// Check for environment variable first
 	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
-		return fmt.Sprintf("host=%s user=postgres password=postgres dbname=sirius port=5432 sslmode=disable", dbHost)
+		return "host=sirius-postgres user=postgres password=postgres dbname=sirius port=5432 sslmode=disable"
 	}
 
 	// Default to auto-detection: If we're running in a container, use the container hostname

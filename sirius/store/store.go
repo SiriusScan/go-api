@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/valkey-io/valkey-go"
 )
@@ -18,6 +19,10 @@ type KVStore interface {
 	SetValue(ctx context.Context, key, value string) error
 	// GetValue retrieves the value associated with the given key.
 	GetValue(ctx context.Context, key string) (ValkeyResponse, error)
+	// ListKeys retrieves all keys matching the given pattern.
+	ListKeys(ctx context.Context, pattern string) ([]string, error)
+	// DeleteValue removes the value associated with the given key.
+	DeleteValue(ctx context.Context, key string) error
 	// Close shuts down the underlying connection.
 	Close() error
 }
@@ -70,6 +75,37 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 	}
 
 	return val, nil
+}
+
+// ListKeys implements KVStore by executing a KEYS command with pattern matching.
+func (s *valkeyStore) ListKeys(ctx context.Context, pattern string) ([]string, error) {
+	cmd := s.client.B().Keys().Pattern(pattern).Build()
+	resp := s.client.Do(ctx, cmd)
+
+	if err := resp.Error(); err != nil {
+		return nil, fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	// Parse the response into a string slice
+	keys := strings.Split(resp.String(), "\n")
+	// Filter out empty strings
+	var result []string
+	for _, key := range keys {
+		if key != "" {
+			result = append(result, key)
+		}
+	}
+
+	return result, nil
+}
+
+// DeleteValue implements KVStore by executing a DEL command.
+func (s *valkeyStore) DeleteValue(ctx context.Context, key string) error {
+	cmd := s.client.B().Del().Key(key).Build()
+	if err := s.client.Do(ctx, cmd).Error(); err != nil {
+		return fmt.Errorf("failed to delete key: %w", err)
+	}
+	return nil
 }
 
 // Close shuts down the underlying client connection.
