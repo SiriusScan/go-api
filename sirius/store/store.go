@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/valkey-io/valkey-go"
 )
@@ -54,22 +54,28 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 	var val ValkeyResponse
 
 	if err := resp.Error(); err != nil {
-		return val, err
+		if errors.Is(err, valkey.ErrNil) {
+			return val, fmt.Errorf("key '%s' not found", key)
+		}
+		return val, fmt.Errorf("valkey GET for key '%s' failed: %w", key, err)
 	}
 
-	// Handle empty response
-	respStr := resp.String()
-	if respStr == "" {
-		return val, fmt.Errorf("key not found")
-	}
-
-	err := json.Unmarshal([]byte(respStr), &val)
+	// Key exists, get its string value. resp itself can be used for result conversion if no error.
+	stringValue, err := resp.ToString()
 	if err != nil {
-		// If unmarshaling fails, try to create a response with the raw value
+		return val, fmt.Errorf("failed to convert valkey reply to string for key '%s': %w", key, err)
+	}
+
+	if stringValue == "" {
 		val = ValkeyResponse{
-			Message: ValkeyValue{
-				Value: respStr,
-			},
+			Message: ValkeyValue{Value: ""},
+		}
+		return val, nil
+	}
+
+	if err := json.Unmarshal([]byte(stringValue), &val); err != nil {
+		val = ValkeyResponse{
+			Message: ValkeyValue{Value: stringValue},
 		}
 		return val, nil
 	}
@@ -80,23 +86,29 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 // ListKeys implements KVStore by executing a KEYS command with pattern matching.
 func (s *valkeyStore) ListKeys(ctx context.Context, pattern string) ([]string, error) {
 	cmd := s.client.B().Keys().Pattern(pattern).Build()
-	resp := s.client.Do(ctx, cmd)
+	resp := s.client.Do(ctx, cmd) // resp is valkey.Completed
 
 	if err := resp.Error(); err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, fmt.Errorf("valkey KEYS with pattern '%s' failed: %w", pattern, err)
 	}
 
-	// Parse the response into a string slice
-	keys := strings.Split(resp.String(), "\n")
-	// Filter out empty strings
-	var result []string
-	for _, key := range keys {
-		if key != "" {
-			result = append(result, key)
+	// resp.ToArray() likely returns []valkey.ValkeyMessage or similar.
+	// We need to convert each element to a string.
+	keyMessages, err := resp.ToArray()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert valkey KEYS reply to array for pattern '%s': %w", pattern, err)
+	}
+
+	stringKeys := make([]string, len(keyMessages))
+	for i, keyMsg := range keyMessages {
+		s, err := keyMsg.ToString() // Assuming ValkeyMessage has ToString()
+		if err != nil {
+			// This could happen if a key in the list is not a string, which is unusual for KEYS
+			return nil, fmt.Errorf("failed to convert key message at index %d to string in KEYS result for pattern '%s': %w", i, pattern, err)
 		}
+		stringKeys[i] = s
 	}
-
-	return result, nil
+	return stringKeys, nil
 }
 
 // DeleteValue implements KVStore by executing a DEL command.
