@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/valkey-io/valkey-go"
+	valkey "github.com/valkey-io/valkey-go"
 )
 
 const (
