@@ -23,13 +23,11 @@ jobs:
       - name: Install Dependencies
         run: go mod download
 
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.59.1 # Or latest version
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Lint
-        run: golangci-lint run ./...
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m
 
       - name: Test
         run: go test -v -race ./...
