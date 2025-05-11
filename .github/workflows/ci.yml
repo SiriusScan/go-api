@@ -2,9 +2,9 @@ name: Go Submodule CI - go-api
 
 on:
   push:
-    branches: [ main ] # Or your default branch
+    branches: [main] # Or your default branch
   pull_request:
-    branches: [ main ] # Or your default branch
+    branches: [main] # Or your default branch
 
 jobs:
   test-and-lint:
@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: "1.23"
           cache: true
 
       - name: Install Dependencies
@@ -25,7 +25,7 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2 # Or latest version
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.59.1 # Or latest version
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Lint
@@ -41,4 +41,4 @@ jobs:
           token: ${{ secrets.MAIN_REPO_ACCESS_TOKEN }} # PAT stored in submodule's secrets
           repository: SiriusScan/Sirius # Target repository
           event-type: submodule-update # Custom event type
-          client-payload: '{ "submodule": "${{ github.repository }}", "commit_sha": "${{ github.sha }}", "ref": "${{ github.ref }}" }' 
+          client-payload: '{ "submodule": "${{ github.repository }}", "commit_sha": "${{ github.sha }}", "ref": "${{ github.ref }}" }'
