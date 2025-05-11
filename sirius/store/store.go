@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/valkey-io/valkey-go"
@@ -54,7 +53,7 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 	var val ValkeyResponse
 
 	if err := resp.Error(); err != nil {
-		if errors.Is(err, valkey.ErrNil) {
+		if valkey.IsValkeyNil(err) {
 			return val, fmt.Errorf("key '%s' not found", key)
 		}
 		return val, fmt.Errorf("valkey GET for key '%s' failed: %w", key, err)
