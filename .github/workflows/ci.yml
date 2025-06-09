@@ -32,8 +32,67 @@ jobs:
       - name: Test
         run: go test -v -race ./...
 
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: test-and-lint
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for proper versioning
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          git fetch --tags
+          latest_tag=$(git tag -l "v*" --sort=-version:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            latest_tag="v0.0.0"
+          fi
+          echo "latest_tag=$latest_tag" >> $GITHUB_OUTPUT
+          
+          # Increment patch version
+          version=$(echo $latest_tag | sed 's/v//')
+          IFS='.' read -ra VERSION_PARTS <<< "$version"
+          major=${VERSION_PARTS[0]}
+          minor=${VERSION_PARTS[1]}
+          patch=${VERSION_PARTS[2]}
+          new_patch=$((patch + 1))
+          new_tag="v${major}.${minor}.${new_patch}"
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag ${{ steps.get_tag.outputs.new_tag }}
+          git push origin ${{ steps.get_tag.outputs.new_tag }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_tag.outputs.new_tag }}
+          release_name: Release ${{ steps.get_tag.outputs.new_tag }}
+          body: |
+            Auto-generated release for ${{ steps.get_tag.outputs.new_tag }}
+            
+            Changes since ${{ steps.get_tag.outputs.latest_tag }}:
+            - Updated KVStore interface and implementation
+            - Added ListKeys and DeleteValue methods
+          draft: false
+          prerelease: false
+
+  notify-main-repo:
+    name: Notify Main Repo
+    runs-on: ubuntu-latest
+    needs: [test-and-lint, release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
       - name: Send repository_dispatch to Sirius main repo
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Only on merge/push to main
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.MAIN_REPO_ACCESS_TOKEN }} # PAT stored in submodule's secrets
