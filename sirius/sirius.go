@@ -48,6 +48,17 @@ type Vulnerability struct {
 	Description string  `json:"description"`
 	Title       string  `json:"title"`
 	RiskScore   float64 `json:"riskScore,omitempty"`
+	// Enhanced metadata fields for script detection
+	CVEID       string   `json:"cve_id,omitempty"`
+	CVSSScore   float64  `json:"cvss_score,omitempty"`
+	CVSSVector  string   `json:"cvss_vector,omitempty"`
+	Severity    string   `json:"severity,omitempty"`
+	Remediation string   `json:"remediation,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Confidence  float64  `json:"confidence,omitempty"`
+	// Additional metadata as JSON
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type RiskScore struct {
@@ -137,7 +148,7 @@ type Host struct {
 	IP              string          `json:"ip"`
 	Hostname        string          `json:"hostname"`
 	Ports           []Port          `json:"ports"`
-	Services        []Service      `json:"services,omitempty"`
+	Services        []Service       `json:"services,omitempty"`
 	Vulnerabilities []Vulnerability `json:"vulnerabilities,omitempty"`
 	CPE             []string        `json:"cpe"`
 	Users           []string        `json:"users"`

@@ -62,6 +62,8 @@ type HostRiskStats struct {
 	TotalRiskScore     float64                         `json:"totalRiskScore" gorm:"column:total_risk_score"`
 	AverageRiskScore   float64                         `json:"averageRiskScore" gorm:"column:average_risk_score"`
 	HostSeverityCounts HostVulnerabilitySeverityCounts `json:"hostSeverityCounts" gorm:"-"`
+	SoftwareStats      *SoftwareStatistics             `json:"softwareStats,omitempty" gorm:"-"`
+	LastUpdated        string                          `json:"lastUpdated,omitempty" gorm:"-"`
 }
 
 // GetHostRiskStatistics returns aggregated risk statistics for vulnerabilities on a given host identified by its IP.
@@ -86,6 +88,15 @@ func GetHostRiskStatistics(ip string) (HostRiskStats, error) {
 	stats.HostSeverityCounts, err = GetHostVulnerabilitySeverityCounts(ip)
 	if err != nil {
 		return stats, err
+	}
+
+	// Add software inventory statistics if available
+	softwareStats, err := GetHostSoftwareStatistics(ip)
+	if err == nil && softwareStats.TotalPackages > 0 {
+		stats.SoftwareStats = softwareStats
+		if softwareStats.LastUpdated != "" {
+			stats.LastUpdated = softwareStats.LastUpdated
+		}
 	}
 
 	return stats, nil
@@ -211,16 +222,23 @@ func AddHost(host sirius.Host) error {
 			return fmt.Errorf("error updating host: %w", err)
 		}
 
-		// Update many-to-many relationships for both vulnerabilities and ports
-		// First update vulnerabilities
-		err = db.Model(&existingHost).Association("Vulnerabilities").Replace(dbHost.Vulnerabilities)
+		// Use source-aware functions instead of Replace (which overwrites ALL data)
+		// Use "legacy" as the source for backward compatibility
+		legacySource := models.ScanSource{
+			Name:    "legacy",
+			Version: "unknown",
+			Config:  "backward_compatibility",
+		}
+
+		// Update vulnerabilities with source awareness (preserves existing data from other sources)
+		err = UpdateVulnerabilitiesWithSource(existingHost.ID, dbHost.Vulnerabilities, legacySource)
 		if err != nil {
 			log.Printf("Error updating host-vulnerability associations for %s: %v", host.IP, err)
 			return fmt.Errorf("error updating host-vulnerability associations: %w", err)
 		}
 
-		// Then update ports
-		err = db.Model(&existingHost).Association("Ports").Replace(dbHost.Ports)
+		// Update ports with source awareness (preserves existing data from other sources)
+		err = UpdatePortsWithSource(existingHost.ID, dbHost.Ports, legacySource)
 		if err != nil {
 			log.Printf("Error updating host-port associations for %s: %v", host.IP, err)
 			return fmt.Errorf("error updating host-port associations: %w", err)
@@ -235,6 +253,27 @@ func AddHost(host sirius.Host) error {
 		if err != nil {
 			log.Printf("Error creating host %s: %v", host.IP, err)
 			return fmt.Errorf("error creating host: %w", err)
+		}
+
+		// Use source-aware functions for new hosts too
+		legacySource := models.ScanSource{
+			Name:    "legacy",
+			Version: "unknown",
+			Config:  "backward_compatibility",
+		}
+
+		// Add vulnerabilities with source awareness
+		err = UpdateVulnerabilitiesWithSource(dbHost.ID, dbHost.Vulnerabilities, legacySource)
+		if err != nil {
+			log.Printf("Error adding vulnerabilities for new host %s: %v", host.IP, err)
+			return fmt.Errorf("error adding vulnerabilities for new host: %w", err)
+		}
+
+		// Add ports with source awareness
+		err = UpdatePortsWithSource(dbHost.ID, dbHost.Ports, legacySource)
+		if err != nil {
+			log.Printf("Error adding ports for new host %s: %v", host.IP, err)
+			return fmt.Errorf("error adding ports for new host: %w", err)
 		}
 
 		log.Printf("Successfully created host %s", host.IP)
@@ -647,3 +686,261 @@ func MapSiriusBaseMetricV2ToDBBaseMetricV2(siriusMetricV2 sirius.BaseMetricV2) m
 	}
 }
 */
+
+// EnhancedHostData represents host data with JSONB fields
+type EnhancedHostData struct {
+	Host              sirius.Host            `json:"host"`
+	SoftwareInventory map[string]interface{} `json:"software_inventory,omitempty"`
+	SystemFingerprint map[string]interface{} `json:"system_fingerprint,omitempty"`
+	AgentMetadata     map[string]interface{} `json:"agent_metadata,omitempty"`
+}
+
+// GetHostWithEnhancedData retrieves host information including JSONB fields
+func GetHostWithEnhancedData(ip string, includeFields []string) (*EnhancedHostData, error) {
+	db := postgres.GetDB()
+
+	// Check if database is available
+	if db == nil {
+		log.Printf("Warning: Database not available, cannot retrieve host %s", ip)
+		return nil, fmt.Errorf("database connection not available")
+	}
+
+	var dbHost models.Host
+	result := db.Preload("Ports").Preload("Vulnerabilities").Preload("Services").Where("ip = ?", ip).First(&dbHost)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// Map the database host to a sirius.Host
+	host := MapDBHostToSiriusHost(dbHost)
+
+	// Create enhanced data structure
+	enhancedData := &EnhancedHostData{
+		Host: host,
+	}
+
+	// Include JSONB fields based on request
+	if len(includeFields) == 0 || stringSliceContains(includeFields, "software_inventory") || stringSliceContains(includeFields, "packages") {
+		if len(dbHost.SoftwareInventory) > 0 {
+			enhancedData.SoftwareInventory = dbHost.SoftwareInventory
+		}
+	}
+
+	if len(includeFields) == 0 || stringSliceContains(includeFields, "system_fingerprint") || stringSliceContains(includeFields, "fingerprint") {
+		if len(dbHost.SystemFingerprint) > 0 {
+			enhancedData.SystemFingerprint = dbHost.SystemFingerprint
+		}
+	}
+
+	if len(includeFields) == 0 || stringSliceContains(includeFields, "agent_metadata") || stringSliceContains(includeFields, "metadata") {
+		if len(dbHost.AgentMetadata) > 0 {
+			enhancedData.AgentMetadata = dbHost.AgentMetadata
+		}
+	}
+
+	return enhancedData, nil
+}
+
+// SoftwareInventoryData represents structured software inventory information
+type SoftwareInventoryData struct {
+	Packages     []map[string]interface{} `json:"packages"`
+	PackageCount int                      `json:"package_count"`
+	CollectedAt  string                   `json:"collected_at"`
+	Source       string                   `json:"source"`
+	Statistics   map[string]interface{}   `json:"statistics,omitempty"`
+}
+
+// GetHostSoftwareInventory retrieves only software inventory data for a host
+func GetHostSoftwareInventory(ip string) (*SoftwareInventoryData, error) {
+	db := postgres.GetDB()
+
+	if db == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+
+	var dbHost models.Host
+	result := db.Select("software_inventory").Where("ip = ?", ip).First(&dbHost)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	if len(dbHost.SoftwareInventory) == 0 {
+		return &SoftwareInventoryData{
+			Packages:     []map[string]interface{}{},
+			PackageCount: 0,
+		}, nil
+	}
+
+	// Parse software inventory JSONB data
+	inventory := &SoftwareInventoryData{}
+
+	if packages, ok := dbHost.SoftwareInventory["packages"].([]interface{}); ok {
+		for _, pkg := range packages {
+			if pkgMap, ok := pkg.(map[string]interface{}); ok {
+				inventory.Packages = append(inventory.Packages, pkgMap)
+			}
+		}
+	}
+
+	if count, ok := dbHost.SoftwareInventory["package_count"].(float64); ok {
+		inventory.PackageCount = int(count)
+	} else {
+		inventory.PackageCount = len(inventory.Packages)
+	}
+
+	if collectedAt, ok := dbHost.SoftwareInventory["collected_at"].(string); ok {
+		inventory.CollectedAt = collectedAt
+	}
+
+	if source, ok := dbHost.SoftwareInventory["source"].(string); ok {
+		inventory.Source = source
+	}
+
+	if stats, ok := dbHost.SoftwareInventory["statistics"].(map[string]interface{}); ok {
+		inventory.Statistics = stats
+	}
+
+	return inventory, nil
+}
+
+// SystemFingerprintData represents structured system fingerprint information
+type SystemFingerprintData struct {
+	Fingerprint          map[string]interface{} `json:"fingerprint"`
+	CollectedAt          string                 `json:"collected_at"`
+	Source               string                 `json:"source"`
+	Platform             string                 `json:"platform"`
+	CollectionDurationMs int64                  `json:"collection_duration_ms"`
+	Summary              map[string]interface{} `json:"summary,omitempty"`
+}
+
+// GetHostSystemFingerprint retrieves only system fingerprint data for a host
+func GetHostSystemFingerprint(ip string) (*SystemFingerprintData, error) {
+	db := postgres.GetDB()
+
+	if db == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+
+	var dbHost models.Host
+	result := db.Select("system_fingerprint").Where("ip = ?", ip).First(&dbHost)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	if len(dbHost.SystemFingerprint) == 0 {
+		return &SystemFingerprintData{
+			Fingerprint: map[string]interface{}{},
+		}, nil
+	}
+
+	// Parse system fingerprint JSONB data
+	fingerprint := &SystemFingerprintData{}
+
+	if fp, ok := dbHost.SystemFingerprint["fingerprint"].(map[string]interface{}); ok {
+		fingerprint.Fingerprint = fp
+	}
+
+	if collectedAt, ok := dbHost.SystemFingerprint["collected_at"].(string); ok {
+		fingerprint.CollectedAt = collectedAt
+	}
+
+	if source, ok := dbHost.SystemFingerprint["source"].(string); ok {
+		fingerprint.Source = source
+	}
+
+	if platform, ok := dbHost.SystemFingerprint["platform"].(string); ok {
+		fingerprint.Platform = platform
+	}
+
+	if duration, ok := dbHost.SystemFingerprint["collection_duration_ms"].(float64); ok {
+		fingerprint.CollectionDurationMs = int64(duration)
+	}
+
+	if summary, ok := dbHost.SystemFingerprint["summary"].(map[string]interface{}); ok {
+		fingerprint.Summary = summary
+	}
+
+	return fingerprint, nil
+}
+
+// SoftwareStatistics represents aggregated software inventory statistics
+type SoftwareStatistics struct {
+	TotalPackages    int            `json:"total_packages"`
+	Architectures    map[string]int `json:"architectures"`
+	Publishers       map[string]int `json:"publishers"`
+	LastUpdated      string         `json:"last_updated"`
+	PackagesBySource map[string]int `json:"packages_by_source,omitempty"`
+}
+
+// GetHostSoftwareStatistics retrieves aggregated software statistics for a host
+func GetHostSoftwareStatistics(ip string) (*SoftwareStatistics, error) {
+	inventory, err := GetHostSoftwareInventory(ip)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &SoftwareStatistics{
+		TotalPackages:    inventory.PackageCount,
+		Architectures:    make(map[string]int),
+		Publishers:       make(map[string]int),
+		PackagesBySource: make(map[string]int),
+		LastUpdated:      inventory.CollectedAt,
+	}
+
+	// Aggregate statistics from packages
+	for _, pkg := range inventory.Packages {
+		if arch, ok := pkg["architecture"].(string); ok && arch != "" {
+			stats.Architectures[arch]++
+		}
+
+		if publisher, ok := pkg["publisher"].(string); ok && publisher != "" {
+			stats.Publishers[publisher]++
+		}
+
+		if source, ok := pkg["source"].(string); ok && source != "" {
+			stats.PackagesBySource[source]++
+		}
+	}
+
+	// Use statistics from JSONB if available
+	if inventory.Statistics != nil {
+		if archs, ok := inventory.Statistics["architectures"].(map[string]interface{}); ok {
+			archStats := make(map[string]int)
+			for k, v := range archs {
+				if count, ok := v.(float64); ok {
+					archStats[k] = int(count)
+				}
+			}
+			if len(archStats) > 0 {
+				stats.Architectures = archStats
+			}
+		}
+
+		if pubs, ok := inventory.Statistics["publishers"].(map[string]interface{}); ok {
+			pubStats := make(map[string]int)
+			for k, v := range pubs {
+				if count, ok := v.(float64); ok {
+					pubStats[k] = int(count)
+				}
+			}
+			if len(pubStats) > 0 {
+				stats.Publishers = pubStats
+			}
+		}
+	}
+
+	return stats, nil
+}
+
+// Helper function to check if a slice contains a string
+func stringSliceContains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
