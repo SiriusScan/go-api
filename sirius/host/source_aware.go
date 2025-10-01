@@ -121,10 +121,15 @@ func UpdateVulnerabilitiesWithSource(hostID uint, vulnerabilities []models.Vulne
 				vuln.VID, hostID, source.Name)
 		} else {
 			// Update existing relationship - refresh last_seen time
-			hostVuln.LastSeen = now
-			hostVuln.SourceVersion = source.Version
-			hostVuln.Status = "active" // Re-activate if it was previously resolved
-			err = db.Save(&hostVuln).Error
+			// Use Updates() instead of Save() to avoid primary key constraint issues
+			err = db.Model(&models.HostVulnerability{}).
+				Where("host_id = ? AND vulnerability_id = ? AND source = ?", hostID, existingVuln.ID, source.Name).
+				Updates(map[string]interface{}{
+					"last_seen":      now,
+					"source_version": source.Version,
+					"status":         "active", // Re-activate if it was previously resolved
+					"notes":          source.Config,
+				}).Error
 			if err != nil {
 				return fmt.Errorf("error updating host-vulnerability relationship: %w", err)
 			}
@@ -174,10 +179,15 @@ func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanS
 				port.ID, port.Protocol, hostID, source.Name)
 		} else {
 			// Update existing relationship - refresh last_seen time
-			hostPort.LastSeen = now
-			hostPort.SourceVersion = source.Version
-			hostPort.Status = "active" // Re-activate if it was previously closed
-			err = db.Save(&hostPort).Error
+			// Use Updates() instead of Save() to avoid primary key constraint issues
+			err = db.Model(&models.HostPort{}).
+				Where("host_id = ? AND port_id = ? AND source = ?", hostID, existingPort.ID, source.Name).
+				Updates(map[string]interface{}{
+					"last_seen":      now,
+					"source_version": source.Version,
+					"status":         "active", // Re-activate if it was previously closed
+					"notes":          source.Config,
+				}).Error
 			if err != nil {
 				return fmt.Errorf("error updating host-port relationship: %w", err)
 			}
