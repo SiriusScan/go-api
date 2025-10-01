@@ -147,6 +147,14 @@ func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanS
 	now := time.Now()
 
 	for _, port := range ports {
+		// Set default values if protocol or state are empty
+		if port.Protocol == "" {
+			port.Protocol = "tcp" // Default to TCP if not specified
+		}
+		if port.State == "" {
+			port.State = "open" // Default to open if we're seeing it in a scan
+		}
+
 		// Ensure port exists in ports table using FirstOrCreate for upsert
 		var existingPort models.Port
 		err := db.Where("id = ? AND protocol = ?", port.ID, port.Protocol).FirstOrCreate(&existingPort, port).Error
