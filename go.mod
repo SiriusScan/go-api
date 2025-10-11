@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.24.1
 
 require (
-	github.com/valkey-io/valkey-go v1.0.59
+	github.com/valkey-io/valkey-go v1.0.60
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
 )
