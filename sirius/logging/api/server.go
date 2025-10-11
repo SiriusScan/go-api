@@ -23,7 +23,9 @@ func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy","service":"logging-api"}`))
+		if _, err := w.Write([]byte(`{"status":"healthy","service":"logging-api"}`)); err != nil {
+			log.Printf("Failed to write health response: %v", err)
+		}
 	})
 	
 	server := &http.Server{
