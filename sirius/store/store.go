@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	valkey "github.com/valkey-io/valkey-go"
@@ -65,20 +64,10 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 		return val, fmt.Errorf("failed to convert valkey reply to string for key '%s': %w", key, err)
 	}
 
-	if stringValue == "" {
-		val = ValkeyResponse{
-			Message: ValkeyValue{Value: ""},
-		}
-		return val, nil
+	// Return the raw string value directly
+	val = ValkeyResponse{
+		Message: ValkeyValue{Value: stringValue},
 	}
-
-	if err := json.Unmarshal([]byte(stringValue), &val); err != nil {
-		val = ValkeyResponse{
-			Message: ValkeyValue{Value: stringValue},
-		}
-		return val, nil
-	}
-
 	return val, nil
 }
 
