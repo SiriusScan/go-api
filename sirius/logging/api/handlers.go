@@ -43,10 +43,10 @@ type LogRetrievalRequest struct {
 
 // LogRetrievalResponse represents the response for log retrieval
 type LogRetrievalResponse struct {
-	Logs  []logging.LogEntry `json:"logs"`
-	Total int                `json:"total"`
-	Limit int                `json:"limit"`
-	Offset int               `json:"offset"`
+	Logs   []logging.LogEntry `json:"logs"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
 }
 
 // LogStatsResponse represents statistics about logs
@@ -238,7 +238,7 @@ func LogRetrievalHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if search != "" {
 			if !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(search)) &&
-			   !strings.Contains(strings.ToLower(entry.Service), strings.ToLower(search)) {
+				!strings.Contains(strings.ToLower(entry.Service), strings.ToLower(search)) {
 				continue
 			}
 		}
@@ -347,9 +347,9 @@ func LogStatsHandler(w http.ResponseWriter, r *http.Request) {
 		LevelStats:   levelStats,
 		RecentLogs:   recentLogs,
 		Metadata: map[string]interface{}{
-			"max_logs":        MAX_LOGS,
-			"keys_processed":  len(keys),
-			"generated_at":    time.Now().Format(time.RFC3339),
+			"max_logs":       MAX_LOGS,
+			"keys_processed": len(keys),
+			"generated_at":   time.Now().Format(time.RFC3339),
 		},
 	}
 
@@ -535,7 +535,7 @@ func maintainLogCount(ctx context.Context, kvStore store.KVStore) error {
 	// Use a longer timeout for log maintenance
 	maintenanceCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// Get all log keys
 	keys, err := kvStore.ListKeys(maintenanceCtx, LOG_PREFIX+":*")
 	if err != nil {

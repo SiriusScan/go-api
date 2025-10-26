@@ -156,7 +156,7 @@ type Host struct {
 	Agent           *SiriusAgent    `json:"agent,omitempty"`
 }
 type Port struct {
-	ID       int    `json:"id"`
+	Number   int    `json:"number"`   // Port number (22, 80, 443, etc.)
 	Protocol string `json:"protocol"`
 	State    string `json:"state"`
 }

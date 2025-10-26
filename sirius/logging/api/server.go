@@ -15,10 +15,10 @@ type LoggingAPIServer struct {
 // NewLoggingAPIServer creates a new logging API server
 func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 	mux := http.NewServeMux()
-	
+
 	// Setup logging routes
 	SetupLoggingRoutes(mux)
-	
+
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -27,7 +27,7 @@ func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 			log.Printf("Failed to write health response: %v", err)
 		}
 	})
-	
+
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -35,7 +35,7 @@ func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	
+
 	return &LoggingAPIServer{
 		server: server,
 		mux:    mux,

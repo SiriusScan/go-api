@@ -363,8 +363,9 @@ func MapDBHostToSiriusHost(dbHost models.Host) sirius.Host {
 	var siriusPorts []sirius.Port
 	for _, dbPort := range dbHost.Ports {
 		siriusPort := sirius.Port{
-			ID:    dbPort.ID,
-			State: "open",
+			Number:   dbPort.Number,
+			Protocol: dbPort.Protocol,
+			State:    dbPort.State,
 		}
 		siriusPorts = append(siriusPorts, siriusPort)
 	}
@@ -482,9 +483,9 @@ func MapSiriusHostToDBHost(siriusHost sirius.Host) models.Host {
 	// Map Ports from sirius.Host to models.Host
 	var dbPorts []models.Port
 	for _, port := range siriusHost.Ports {
-		// Try to find an existing port by ID and protocol
+		// Try to find an existing port by Number and protocol
 		var existingPort models.Port
-		result := db.Where("id = ? AND protocol = ?", port.ID, port.Protocol).First(&existingPort)
+		result := db.Where("number = ? AND protocol = ?", port.Number, port.Protocol).First(&existingPort)
 
 		if result.RowsAffected > 0 {
 			// Use the existing port if found
@@ -492,7 +493,7 @@ func MapSiriusHostToDBHost(siriusHost sirius.Host) models.Host {
 		} else {
 			// Otherwise create a new port entry
 			dbPort := models.Port{
-				ID:       port.ID,
+				Number:   port.Number,
 				Protocol: port.Protocol,
 				State:    port.State,
 			}

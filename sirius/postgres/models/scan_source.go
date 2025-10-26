@@ -3,6 +3,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ScanSource represents the metadata about a scan source
@@ -47,7 +49,7 @@ type PortWithSource struct {
 
 // ScanHistory represents the timeline of scans for a host
 type ScanHistoryEntry struct {
-	ID            uint      `json:"id" gorm:"primaryKey"`
+	gorm.Model               // Provides ID, CreatedAt, UpdatedAt, DeletedAt
 	HostID        uint      `json:"host_id"`
 	Source        string    `json:"source"`
 	SourceVersion string    `json:"source_version"`
@@ -55,7 +57,6 @@ type ScanHistoryEntry struct {
 	FindingsCount int       `json:"findings_count"`
 	ScanConfig    string    `json:"scan_config,omitempty"`
 	Notes         string    `json:"notes,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
 }
 
 // SourceCoverage represents statistics about source coverage

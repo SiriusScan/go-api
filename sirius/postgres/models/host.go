@@ -71,11 +71,16 @@ type Host struct {
 
 type Port struct {
 	gorm.Model
-	ID        int
-	Protocol  string
+	Number    int    `gorm:"not null"`  // Port number (22, 80, 443, etc.)
+	Protocol  string `gorm:"not null"`
 	State     string
 	Hosts     []Host     `gorm:"many2many:host_ports"`
 	HostPorts []HostPort `gorm:"foreignKey:PortID"`
+}
+
+// TableName ensures GORM uses the correct table name
+func (Port) TableName() string {
+	return "ports"
 }
 
 // Enhanced HostPort junction table with source attribution

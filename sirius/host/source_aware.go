@@ -155,11 +155,17 @@ func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanS
 			port.State = "open" // Default to open if we're seeing it in a scan
 		}
 
-		// Ensure port exists in ports table using FirstOrCreate for upsert
+		// Find or create port by Number and Protocol (not ID)
 		var existingPort models.Port
-		err := db.Where("id = ? AND protocol = ?", port.ID, port.Protocol).FirstOrCreate(&existingPort, port).Error
-		if err != nil {
-			return fmt.Errorf("error ensuring port %d/%s exists: %w", port.ID, port.Protocol, err)
+		result := db.Where("number = ? AND protocol = ?", port.Number, port.Protocol).
+			FirstOrCreate(&existingPort, models.Port{
+				Number:   port.Number,
+				Protocol: port.Protocol,
+				State:    port.State,
+			})
+		
+		if result.Error != nil {
+			return fmt.Errorf("error ensuring port %d/%s exists: %w", port.Number, port.Protocol, result.Error)
 		}
 
 		// Check if this host-port-source combination already exists
@@ -184,7 +190,7 @@ func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanS
 				return fmt.Errorf("error creating host-port relationship: %w", err)
 			}
 			log.Printf("Created new port %d/%s for host %d from source %s",
-				port.ID, port.Protocol, hostID, source.Name)
+				port.Number, port.Protocol, hostID, source.Name)
 		} else {
 			// Update existing relationship - refresh last_seen time
 			// Use Updates() instead of Save() to avoid primary key constraint issues
@@ -200,7 +206,7 @@ func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanS
 				return fmt.Errorf("error updating host-port relationship: %w", err)
 			}
 			log.Printf("Updated existing port %d/%s for host %d from source %s",
-				port.ID, port.Protocol, hostID, source.Name)
+				port.Number, port.Protocol, hostID, source.Name)
 		}
 	}
 
