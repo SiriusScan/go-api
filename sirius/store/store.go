@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	valkey "github.com/valkey-io/valkey-go"
 )
@@ -15,8 +16,14 @@ const (
 type KVStore interface {
 	// SetValue sets the given key to the specified value.
 	SetValue(ctx context.Context, key, value string) error
+	// SetValueWithTTL sets the given key to the specified value with a TTL in seconds.
+	SetValueWithTTL(ctx context.Context, key, value string, ttlSeconds int) error
 	// GetValue retrieves the value associated with the given key.
 	GetValue(ctx context.Context, key string) (ValkeyResponse, error)
+	// GetTTL retrieves the remaining TTL in seconds for the given key.
+	GetTTL(ctx context.Context, key string) (int, error)
+	// SetExpire sets the TTL for an existing key in seconds.
+	SetExpire(ctx context.Context, key string, ttlSeconds int) error
 	// ListKeys retrieves all keys matching the given pattern.
 	ListKeys(ctx context.Context, pattern string) ([]string, error)
 	// DeleteValue removes the value associated with the given key.
@@ -42,6 +49,35 @@ func NewValkeyStore() (KVStore, error) {
 // SetValue implements KVStore by executing a SET command with NX semantics.
 func (s *valkeyStore) SetValue(ctx context.Context, key, value string) error {
 	cmd := s.client.B().Set().Key(key).Value(value).Build()
+	return s.client.Do(ctx, cmd).Error()
+}
+
+// SetValueWithTTL implements KVStore by executing a SET command with TTL.
+func (s *valkeyStore) SetValueWithTTL(ctx context.Context, key, value string, ttlSeconds int) error {
+	cmd := s.client.B().Set().Key(key).Value(value).Ex(time.Duration(ttlSeconds) * time.Second).Build()
+	return s.client.Do(ctx, cmd).Error()
+}
+
+// GetTTL implements KVStore by executing a TTL command.
+func (s *valkeyStore) GetTTL(ctx context.Context, key string) (int, error) {
+	cmd := s.client.B().Ttl().Key(key).Build()
+	resp := s.client.Do(ctx, cmd)
+
+	if err := resp.Error(); err != nil {
+		return -1, fmt.Errorf("valkey TTL for key '%s' failed: %w", key, err)
+	}
+
+	ttl, err := resp.ToInt64()
+	if err != nil {
+		return -1, fmt.Errorf("failed to convert TTL reply to int64 for key '%s': %w", key, err)
+	}
+
+	return int(ttl), nil
+}
+
+// SetExpire implements KVStore by executing an EXPIRE command.
+func (s *valkeyStore) SetExpire(ctx context.Context, key string, ttlSeconds int) error {
+	cmd := s.client.B().Expire().Key(key).Seconds(int64(ttlSeconds)).Build()
 	return s.client.Do(ctx, cmd).Error()
 }
 

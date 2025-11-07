@@ -59,3 +59,10 @@ echo "To update projects to latest version:"
 echo "  cd $BASE_DIR/go-api"
 echo "  ./scripts/update-dependents.sh $LATEST_VERSION"
 
+
+
+
+
+
+
+

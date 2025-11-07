@@ -324,3 +324,10 @@ Generated as part of comprehensive database schema audit - October 2025
 - Prevents: Future data integrity issues with CVEs
 - Improves: Query performance across the application
 
+
+
+
+
+
+
+

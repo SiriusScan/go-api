@@ -10,208 +10,60 @@ import (
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 )
 
-// AddHostWithSource adds or updates a host with source attribution
+// AddHostWithSource adds or updates a host with source attribution using repository pattern
 func AddHostWithSource(host sirius.Host, source models.ScanSource) error {
 	log.Printf("Adding/updating host %s with source %s (version: %s)", host.IP, source.Name, source.Version)
 
-	dbHost := MapSiriusHostToDBHost(host)
-	db := postgres.GetDB()
+	repo := NewHostRepository()
 
-	// Find existing host
-	var existingHost models.Host
-	result := db.Where("ip = ?", host.IP).First(&existingHost)
-
-	if result.Error == nil {
-		// Host exists - update with source-aware logic
-		log.Printf("Updating existing host %s with source-aware logic", host.IP)
-
-		// Update host basic info
-		err := db.Model(&existingHost).Updates(dbHost).Error
-		if err != nil {
-			return fmt.Errorf("error updating host %s: %w", host.IP, err)
-		}
-
-		// Update vulnerabilities with source awareness
-		err = UpdateVulnerabilitiesWithSource(existingHost.ID, dbHost.Vulnerabilities, source)
-		if err != nil {
-			return fmt.Errorf("error updating vulnerabilities for host %s: %w", host.IP, err)
-		}
-
-		// Update ports with source awareness
-		err = UpdatePortsWithSource(existingHost.ID, dbHost.Ports, source)
-		if err != nil {
-			return fmt.Errorf("error updating ports for host %s: %w", host.IP, err)
-		}
-
-		log.Printf("Successfully updated host %s with source %s", host.IP, source.Name)
-	} else {
-		// Create new host
-		log.Printf("Creating new host %s with source %s", host.IP, source.Name)
-
-		err := db.Create(&dbHost).Error
-		if err != nil {
-			return fmt.Errorf("error creating host %s: %w", host.IP, err)
-		}
-
-		// Add vulnerabilities with source info
-		err = UpdateVulnerabilitiesWithSource(dbHost.ID, dbHost.Vulnerabilities, source)
-		if err != nil {
-			return fmt.Errorf("error adding vulnerabilities for new host %s: %w", host.IP, err)
-		}
-
-		// Add ports with source info
-		err = UpdatePortsWithSource(dbHost.ID, dbHost.Ports, source)
-		if err != nil {
-			return fmt.Errorf("error adding ports for new host %s: %w", host.IP, err)
-		}
-
-		log.Printf("Successfully created host %s with source %s", host.IP, source.Name)
+	// 1. Upsert host entity (basic fields only)
+	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID)
+	if err != nil {
+		return fmt.Errorf("failed to upsert host: %w", err)
 	}
 
-	// Record scan history
-	err := recordScanHistory(dbHost.ID, source, len(dbHost.Vulnerabilities)+len(dbHost.Ports))
+	// 2. Process ports
+	for _, port := range host.Ports {
+		portID, err := repo.UpsertPort(port.Number, port.Protocol, port.State)
+		if err != nil {
+			return fmt.Errorf("failed to upsert port %d/%s: %w", port.Number, port.Protocol, err)
+		}
+
+		// Link host-port with source attribution
+		err = repo.LinkHostPort(hostID, portID, source)
+		if err != nil {
+			return fmt.Errorf("failed to link host-port: %w", err)
+		}
+	}
+
+	// 3. Process vulnerabilities
+	for _, vuln := range host.Vulnerabilities {
+		vulnID, err := repo.UpsertVulnerability(vuln.VID, vuln.Title, vuln.Description, vuln.RiskScore)
+		if err != nil {
+			return fmt.Errorf("failed to upsert vulnerability %s: %w", vuln.VID, err)
+		}
+
+		// Link host-vulnerability with source attribution
+		err = repo.LinkHostVulnerability(hostID, vulnID, source)
+		if err != nil {
+			return fmt.Errorf("failed to link host-vulnerability: %w", err)
+		}
+	}
+
+	// 4. Record scan history
+	err = recordScanHistory(hostID, source, len(host.Vulnerabilities)+len(host.Ports))
 	if err != nil {
 		log.Printf("Warning: Failed to record scan history for %s: %v", host.IP, err)
 	}
 
+	log.Printf("Successfully processed host %s with source %s", host.IP, source.Name)
 	return nil
 }
 
-// UpdateVulnerabilitiesWithSource updates vulnerability associations with source attribution
-func UpdateVulnerabilitiesWithSource(hostID uint, vulnerabilities []models.Vulnerability, source models.ScanSource) error {
-	db := postgres.GetDB()
-	now := time.Now()
-
-	for _, vuln := range vulnerabilities {
-		// Ensure vulnerability exists in vulnerabilities table
-		var existingVuln models.Vulnerability
-		err := db.Where("v_id = ?", vuln.VID).First(&existingVuln).Error
-		if err != nil {
-			// Create vulnerability if it doesn't exist
-			err = db.Create(&vuln).Error
-			if err != nil {
-				return fmt.Errorf("error creating vulnerability %s: %w", vuln.VID, err)
-			}
-			existingVuln = vuln
-		}
-
-		// Check if this host-vulnerability-source combination already exists
-		var hostVuln models.HostVulnerability
-		err = db.Where("host_id = ? AND vulnerability_id = ? AND source = ?",
-			hostID, existingVuln.ID, source.Name).First(&hostVuln).Error
-
-		if err != nil {
-			// Create new host-vulnerability relationship with source
-			hostVuln = models.HostVulnerability{
-				HostID:          hostID,
-				VulnerabilityID: existingVuln.ID,
-				Source:          source.Name,
-				SourceVersion:   source.Version,
-				FirstSeen:       now,
-				LastSeen:        now,
-				Status:          "active",
-				Confidence:      1.0,
-				Notes:           source.Config,
-			}
-			err = db.Create(&hostVuln).Error
-			if err != nil {
-				return fmt.Errorf("error creating host-vulnerability relationship: %w", err)
-			}
-			log.Printf("Created new vulnerability %s for host %d from source %s",
-				vuln.VID, hostID, source.Name)
-		} else {
-			// Update existing relationship - refresh last_seen time
-			// Use Updates() instead of Save() to avoid primary key constraint issues
-			err = db.Model(&models.HostVulnerability{}).
-				Where("host_id = ? AND vulnerability_id = ? AND source = ?", hostID, existingVuln.ID, source.Name).
-				Updates(map[string]interface{}{
-					"last_seen":      now,
-					"source_version": source.Version,
-					"status":         "active", // Re-activate if it was previously resolved
-					"notes":          source.Config,
-				}).Error
-			if err != nil {
-				return fmt.Errorf("error updating host-vulnerability relationship: %w", err)
-			}
-			log.Printf("Updated existing vulnerability %s for host %d from source %s",
-				vuln.VID, hostID, source.Name)
-		}
-	}
-
-	return nil
-}
-
-// UpdatePortsWithSource updates port associations with source attribution
-func UpdatePortsWithSource(hostID uint, ports []models.Port, source models.ScanSource) error {
-	db := postgres.GetDB()
-	now := time.Now()
-
-	for _, port := range ports {
-		// Set default values if protocol or state are empty
-		if port.Protocol == "" {
-			port.Protocol = "tcp" // Default to TCP if not specified
-		}
-		if port.State == "" {
-			port.State = "open" // Default to open if we're seeing it in a scan
-		}
-
-		// Find or create port by Number and Protocol (not ID)
-		var existingPort models.Port
-		result := db.Where("number = ? AND protocol = ?", port.Number, port.Protocol).
-			FirstOrCreate(&existingPort, models.Port{
-				Number:   port.Number,
-				Protocol: port.Protocol,
-				State:    port.State,
-			})
-		
-		if result.Error != nil {
-			return fmt.Errorf("error ensuring port %d/%s exists: %w", port.Number, port.Protocol, result.Error)
-		}
-
-		// Check if this host-port-source combination already exists
-		var hostPort models.HostPort
-		err = db.Where("host_id = ? AND port_id = ? AND source = ?",
-			hostID, existingPort.ID, source.Name).First(&hostPort).Error
-
-		if err != nil {
-			// Create new host-port relationship with source
-			hostPort = models.HostPort{
-				HostID:        hostID,
-				PortID:        uint(existingPort.ID),
-				Source:        source.Name,
-				SourceVersion: source.Version,
-				FirstSeen:     now,
-				LastSeen:      now,
-				Status:        "active",
-				Notes:         source.Config,
-			}
-			err = db.Create(&hostPort).Error
-			if err != nil {
-				return fmt.Errorf("error creating host-port relationship: %w", err)
-			}
-			log.Printf("Created new port %d/%s for host %d from source %s",
-				port.Number, port.Protocol, hostID, source.Name)
-		} else {
-			// Update existing relationship - refresh last_seen time
-			// Use Updates() instead of Save() to avoid primary key constraint issues
-			err = db.Model(&models.HostPort{}).
-				Where("host_id = ? AND port_id = ? AND source = ?", hostID, existingPort.ID, source.Name).
-				Updates(map[string]interface{}{
-					"last_seen":      now,
-					"source_version": source.Version,
-					"status":         "active", // Re-activate if it was previously closed
-					"notes":          source.Config,
-				}).Error
-			if err != nil {
-				return fmt.Errorf("error updating host-port relationship: %w", err)
-			}
-			log.Printf("Updated existing port %d/%s for host %d from source %s",
-				port.Number, port.Protocol, hostID, source.Name)
-		}
-	}
-
-	return nil
-}
+// REMOVED: UpdateVulnerabilitiesWithSource and UpdatePortsWithSource
+// These functions have been replaced by repository pattern methods:
+// - HostRepository.UpsertVulnerability() and LinkHostVulnerability()
+// - HostRepository.UpsertPort() and LinkHostPort()
 
 // GetHostWithSources retrieves a host with all source-attributed data
 func GetHostWithSources(ip string) (models.HostWithSources, error) {
@@ -411,82 +263,66 @@ func extractVersion(userAgent, tool string) string {
 	return "detected"
 }
 
-// AddHostWithSourceAndJSONB adds or updates a host with source attribution and JSONB data
+// AddHostWithSourceAndJSONB adds or updates a host with source attribution and JSONB data using repository pattern
 func AddHostWithSourceAndJSONB(host sirius.Host, source models.ScanSource,
 	softwareInventory, systemFingerprint, agentMetadata map[string]interface{}) error {
 	log.Printf("Adding/updating host %s with source %s and enhanced JSONB data", host.IP, source.Name)
 
-	dbHost := MapSiriusHostToDBHost(host)
+	repo := NewHostRepository()
 
-	// Populate JSONB fields - Convert map[string]interface{} to JSONB type
-	if len(softwareInventory) > 0 {
-		dbHost.SoftwareInventory = models.JSONB(softwareInventory)
-		log.Printf("Added software inventory data for host %s (%d fields)", host.IP, len(softwareInventory))
-	}
-	if len(systemFingerprint) > 0 {
-		dbHost.SystemFingerprint = models.JSONB(systemFingerprint)
-		log.Printf("Added system fingerprint data for host %s (%d fields)", host.IP, len(systemFingerprint))
-	}
-	if len(agentMetadata) > 0 {
-		dbHost.AgentMetadata = models.JSONB(agentMetadata)
-		log.Printf("Added agent metadata for host %s (%d fields)", host.IP, len(agentMetadata))
+	// 1. Upsert host entity (basic fields only)
+	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID)
+	if err != nil {
+		return fmt.Errorf("failed to upsert host: %w", err)
 	}
 
-	db := postgres.GetDB()
-
-	// Find existing host
-	var existingHost models.Host
-	result := db.Where("ip = ?", host.IP).First(&existingHost)
-
-	if result.Error == nil {
-		// Host exists - update with source-aware logic and JSONB data
-		log.Printf("Updating existing host %s with source-aware logic and JSONB data", host.IP)
-
-		// Update host basic info and JSONB fields
-		err := db.Model(&existingHost).Updates(dbHost).Error
+	// 2. Update JSONB fields if provided
+	if len(softwareInventory) > 0 || len(systemFingerprint) > 0 || len(agentMetadata) > 0 {
+		err = repo.UpdateHostJSONB(hostID, softwareInventory, systemFingerprint, agentMetadata)
 		if err != nil {
-			return fmt.Errorf("error updating host %s: %w", host.IP, err)
+			return fmt.Errorf("failed to update JSONB fields: %w", err)
 		}
-
-		// Update vulnerabilities with source awareness
-		err = UpdateVulnerabilitiesWithSource(existingHost.ID, dbHost.Vulnerabilities, source)
-		if err != nil {
-			return fmt.Errorf("error updating vulnerabilities for host %s: %w", host.IP, err)
+		if len(softwareInventory) > 0 {
+			log.Printf("Added software inventory data for host %s (%d fields)", host.IP, len(softwareInventory))
 		}
-
-		// Update ports with source awareness
-		err = UpdatePortsWithSource(existingHost.ID, dbHost.Ports, source)
-		if err != nil {
-			return fmt.Errorf("error updating ports for host %s: %w", host.IP, err)
+		if len(systemFingerprint) > 0 {
+			log.Printf("Added system fingerprint data for host %s (%d fields)", host.IP, len(systemFingerprint))
 		}
-
-		log.Printf("Successfully updated host %s with source %s and JSONB data", host.IP, source.Name)
-	} else {
-		// Create new host with JSONB data
-		log.Printf("Creating new host %s with source %s and JSONB data", host.IP, source.Name)
-
-		err := db.Create(&dbHost).Error
-		if err != nil {
-			return fmt.Errorf("error creating host %s: %w", host.IP, err)
+		if len(agentMetadata) > 0 {
+			log.Printf("Added agent metadata for host %s (%d fields)", host.IP, len(agentMetadata))
 		}
-
-		// Add vulnerabilities with source info
-		err = UpdateVulnerabilitiesWithSource(dbHost.ID, dbHost.Vulnerabilities, source)
-		if err != nil {
-			return fmt.Errorf("error adding vulnerabilities for new host %s: %w", host.IP, err)
-		}
-
-		// Add ports with source info
-		err = UpdatePortsWithSource(dbHost.ID, dbHost.Ports, source)
-		if err != nil {
-			return fmt.Errorf("error adding ports for new host %s: %w", host.IP, err)
-		}
-
-		log.Printf("Successfully created host %s with source %s and JSONB data", host.IP, source.Name)
 	}
 
-	// Record scan history with enhanced data information
-	findingsCount := len(dbHost.Vulnerabilities) + len(dbHost.Ports)
+	// 3. Process ports
+	for _, port := range host.Ports {
+		portID, err := repo.UpsertPort(port.Number, port.Protocol, port.State)
+		if err != nil {
+			return fmt.Errorf("failed to upsert port %d/%s: %w", port.Number, port.Protocol, err)
+		}
+
+		// Link host-port with source attribution
+		err = repo.LinkHostPort(hostID, portID, source)
+		if err != nil {
+			return fmt.Errorf("failed to link host-port: %w", err)
+		}
+	}
+
+	// 4. Process vulnerabilities
+	for _, vuln := range host.Vulnerabilities {
+		vulnID, err := repo.UpsertVulnerability(vuln.VID, vuln.Title, vuln.Description, vuln.RiskScore)
+		if err != nil {
+			return fmt.Errorf("failed to upsert vulnerability %s: %w", vuln.VID, err)
+		}
+
+		// Link host-vulnerability with source attribution
+		err = repo.LinkHostVulnerability(hostID, vulnID, source)
+		if err != nil {
+			return fmt.Errorf("failed to link host-vulnerability: %w", err)
+		}
+	}
+
+	// 5. Record scan history with enhanced data information
+	findingsCount := len(host.Vulnerabilities) + len(host.Ports)
 	if len(softwareInventory) > 0 {
 		findingsCount += 1 // Count software inventory as a finding
 	}
@@ -494,10 +330,11 @@ func AddHostWithSourceAndJSONB(host sirius.Host, source models.ScanSource,
 		findingsCount += 1 // Count system fingerprint as a finding
 	}
 
-	err := recordScanHistory(dbHost.ID, source, findingsCount)
+	err = recordScanHistory(hostID, source, findingsCount)
 	if err != nil {
 		log.Printf("Warning: Failed to record scan history for %s: %v", host.IP, err)
 	}
 
+	log.Printf("Successfully processed host %s with source %s and JSONB data", host.IP, source.Name)
 	return nil
 }

@@ -143,6 +143,19 @@ func connect() {
 		Logger: newLogger,
 	})
 
+	if err == nil {
+		// Configure connection pool to prevent leaks
+		sqlDB, err := db.DB()
+		if err == nil {
+			// Set connection pool settings
+			sqlDB.SetMaxOpenConns(25)                 // Maximum number of open connections
+			sqlDB.SetMaxIdleConns(10)                 // Maximum number of idle connections
+			sqlDB.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
+			sqlDB.SetConnMaxIdleTime(1 * time.Minute) // Maximum idle time before closing
+			log.Println("✅ Database connection pool configured")
+		}
+	}
+
 	if err != nil {
 		connectionError = fmt.Errorf("failed to connect to database: %w", err)
 		isInitialized = false
@@ -256,6 +269,7 @@ func migrateSchema() {
 		&models.CPE{},
 		&models.HostVulnerability{},
 		&models.HostPort{},
+		&models.Event{},
 	)
 	if err != nil {
 		log.Printf("⚠️ Failed to migrate relationship tables: %v", err)

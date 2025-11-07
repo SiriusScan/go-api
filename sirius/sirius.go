@@ -61,6 +61,12 @@ type Vulnerability struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// String returns a safe string representation preventing infinite recursion
+func (v *Vulnerability) String() string {
+	return fmt.Sprintf("Vulnerability{VID:%s, Title:%s, Severity:%s, RiskScore:%.2f, Metadata:%d fields}",
+		v.VID, v.Title, v.Severity, v.RiskScore, len(v.Metadata))
+}
+
 type RiskScore struct {
 	CVSSV3 BaseMetricV3 `json:"CVSSV3,omitempty"`
 	CVSSV2 BaseMetricV2 `json:"CVSSV2,omitempty"`
@@ -155,10 +161,22 @@ type Host struct {
 	Notes           []string        `json:"notes"`
 	Agent           *SiriusAgent    `json:"agent,omitempty"`
 }
+
+// String returns a safe string representation preventing infinite recursion
+func (h *Host) String() string {
+	return fmt.Sprintf("Host{IP:%s, Hostname:%s, OS:%s, Ports:%d, Services:%d, Vulnerabilities:%d}",
+		h.IP, h.Hostname, h.OS, len(h.Ports), len(h.Services), len(h.Vulnerabilities))
+}
+
 type Port struct {
-	Number   int    `json:"number"`   // Port number (22, 80, 443, etc.)
+	Number   int    `json:"number"` // Port number (22, 80, 443, etc.)
 	Protocol string `json:"protocol"`
 	State    string `json:"state"`
+}
+
+// String returns a safe string representation
+func (p *Port) String() string {
+	return fmt.Sprintf("Port{Number:%d, Protocol:%s, State:%s}", p.Number, p.Protocol, p.State)
 }
 
 // ========================= LEGACY =========================

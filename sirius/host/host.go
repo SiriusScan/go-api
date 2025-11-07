@@ -10,38 +10,31 @@ import (
 )
 
 func GetHost(ip string) (sirius.Host, error) {
-	db := postgres.GetDB()
+	repo := NewHostRepository()
 
-	// Check if database is available
-	if db == nil {
-		log.Printf("Warning: Database not available, cannot retrieve host %s", ip)
-		return sirius.Host{IP: ip}, fmt.Errorf("database connection not available")
+	// Get host with explicit JOIN query
+	hostWithRelations, err := repo.GetHostWithRelations(ip)
+	if err != nil {
+		return sirius.Host{}, err
 	}
 
-	var dbHost models.Host
-	result := db.Preload("Ports").Preload("Vulnerabilities").Preload("Services").Where("ip = ?", ip).First(&dbHost)
-
-	if result.Error != nil {
-		return sirius.Host{}, result.Error
-	}
-
-	// Map the database host to a sirius.Host
-	host := MapDBHostToSiriusHost(dbHost)
-
-	return host, nil
+	// Convert to sirius.Host (no circular references to load)
+	return convertHostWithRelationsToSiriusHost(hostWithRelations), nil
 }
 
 func GetAllHosts() ([]sirius.Host, error) {
-	db := postgres.GetDB()
+	repo := NewHostRepository()
 
-	dbHosts, err := postgres.GetAllHosts(db)
+	// Get all hosts with explicit JOIN queries
+	hostsWithRelations, err := repo.GetAllHostsWithRelations()
 	if err != nil {
 		return nil, err
 	}
 
-	var siriusHosts []sirius.Host
-	for _, dbHost := range dbHosts {
-		siriusHosts = append(siriusHosts, MapDBHostToSiriusHost(dbHost))
+	// Convert to sirius.Host slice
+	siriusHosts := make([]sirius.Host, 0, len(hostsWithRelations))
+	for _, hwr := range hostsWithRelations {
+		siriusHosts = append(siriusHosts, convertHostWithRelationsToSiriusHost(&hwr))
 	}
 
 	return siriusHosts, nil
@@ -190,96 +183,19 @@ func GetAllVulnerabilities() ([]VulnerabilitySummary, error) {
 }
 
 // AddHost Chain: SDK Consumer (e.g. Sirius REST API) -> SDK go-api sirius/host (Here)
+// Legacy function - uses repository pattern with "legacy" source for backward compatibility
 func AddHost(host sirius.Host) error {
-	log.Printf("Adding or updating host %s in database", host.IP)
+	log.Printf("Adding or updating host %s in database (legacy mode)", host.IP)
 
-	// Get a database connection
-	db := postgres.GetDB()
-
-	// Check if database is available
-	if db == nil {
-		log.Printf("Warning: Database not available, cannot save host %s", host.IP)
-		return fmt.Errorf("database connection not available")
+	// Use legacy source for backward compatibility
+	legacySource := models.ScanSource{
+		Name:    "legacy",
+		Version: "unknown",
+		Config:  "backward_compatibility",
 	}
 
-	// Map the host to a database model
-	dbHost := MapSiriusHostToDBHost(host)
-
-	// Create a separate host for the Where clause
-	whereHost := models.Host{IP: dbHost.IP}
-
-	// Find the first host with a matching IP
-	var existingHost models.Host
-	result := db.Where(&whereHost).First(&existingHost)
-
-	// If a record was found, update it
-	if result.RowsAffected > 0 {
-		log.Printf("Updating existing host record for %s", host.IP)
-
-		err := db.Model(&existingHost).Updates(&dbHost).Error
-		if err != nil {
-			log.Printf("Error updating host %s: %v", host.IP, err)
-			return fmt.Errorf("error updating host: %w", err)
-		}
-
-		// Use source-aware functions instead of Replace (which overwrites ALL data)
-		// Use "legacy" as the source for backward compatibility
-		legacySource := models.ScanSource{
-			Name:    "legacy",
-			Version: "unknown",
-			Config:  "backward_compatibility",
-		}
-
-		// Update vulnerabilities with source awareness (preserves existing data from other sources)
-		err = UpdateVulnerabilitiesWithSource(existingHost.ID, dbHost.Vulnerabilities, legacySource)
-		if err != nil {
-			log.Printf("Error updating host-vulnerability associations for %s: %v", host.IP, err)
-			return fmt.Errorf("error updating host-vulnerability associations: %w", err)
-		}
-
-		// Update ports with source awareness (preserves existing data from other sources)
-		err = UpdatePortsWithSource(existingHost.ID, dbHost.Ports, legacySource)
-		if err != nil {
-			log.Printf("Error updating host-port associations for %s: %v", host.IP, err)
-			return fmt.Errorf("error updating host-port associations: %w", err)
-		}
-
-		log.Printf("Successfully updated host %s and its relationships", host.IP)
-	} else {
-		// If no record was found, create a new one
-		log.Printf("Creating new host record for %s", host.IP)
-
-		err := db.Create(&dbHost).Error
-		if err != nil {
-			log.Printf("Error creating host %s: %v", host.IP, err)
-			return fmt.Errorf("error creating host: %w", err)
-		}
-
-		// Use source-aware functions for new hosts too
-		legacySource := models.ScanSource{
-			Name:    "legacy",
-			Version: "unknown",
-			Config:  "backward_compatibility",
-		}
-
-		// Add vulnerabilities with source awareness
-		err = UpdateVulnerabilitiesWithSource(dbHost.ID, dbHost.Vulnerabilities, legacySource)
-		if err != nil {
-			log.Printf("Error adding vulnerabilities for new host %s: %v", host.IP, err)
-			return fmt.Errorf("error adding vulnerabilities for new host: %w", err)
-		}
-
-		// Add ports with source awareness
-		err = UpdatePortsWithSource(dbHost.ID, dbHost.Ports, legacySource)
-		if err != nil {
-			log.Printf("Error adding ports for new host %s: %v", host.IP, err)
-			return fmt.Errorf("error adding ports for new host: %w", err)
-		}
-
-		log.Printf("Successfully created host %s", host.IP)
-	}
-
-	return nil
+	// Use source-aware function which now uses repository pattern
+	return AddHostWithSource(host, legacySource)
 }
 
 // DeleteHost handles the POST /host/delete route
@@ -289,9 +205,14 @@ func DeleteHost(ip string) error {
 
 	db := postgres.GetDB()
 
-	// Start a transaction
+	// Start a transaction with proper cleanup
 	tx := db.Begin()
-	tx = tx.Debug()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r) // Re-panic after rollback
+		}
+	}()
 
 	// Delete Host
 	if err := tx.Where("ip = ?", ip).Delete(&models.Host{}).Error; err != nil {
@@ -300,7 +221,9 @@ func DeleteHost(ip string) error {
 	}
 
 	// Commit the transaction
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	return nil
 }
@@ -358,208 +281,62 @@ func UpdateHost(host sirius.Host) error {
 
 /*	=========== Mapping Functions ============ */
 
-// Update to match ToDBHost
-func MapDBHostToSiriusHost(dbHost models.Host) sirius.Host {
+// convertHostWithRelationsToSiriusHost converts HostWithRelations to sirius.Host
+// This function is used by the repository pattern to build responses without circular references
+func convertHostWithRelationsToSiriusHost(hwr *HostWithRelations) sirius.Host {
+	// Convert ports
 	var siriusPorts []sirius.Port
-	for _, dbPort := range dbHost.Ports {
-		siriusPort := sirius.Port{
-			Number:   dbPort.Number,
-			Protocol: dbPort.Protocol,
-			State:    dbPort.State,
-		}
-		siriusPorts = append(siriusPorts, siriusPort)
+	for _, pr := range hwr.Ports {
+		siriusPorts = append(siriusPorts, sirius.Port{
+			Number:   pr.Port.Number,
+			Protocol: pr.Port.Protocol,
+			State:    pr.Port.State,
+		})
 	}
 
-	// Map models.Vulnerabilities to sirius.Vulnerabilities
+	// Convert vulnerabilities
 	var siriusVulnerabilities []sirius.Vulnerability
-	for _, dbVulnerability := range dbHost.Vulnerabilities {
-		siriusVulnerability := sirius.Vulnerability{
-			VID:         dbVulnerability.VID,
-			Title:       dbVulnerability.Title,
-			Description: dbVulnerability.Description,
-			RiskScore:   dbVulnerability.RiskScore,
-			// RiskScore: sirius.RiskScore{
-			// 	CVSSV3: sirius.BaseMetricV3{
-			// 		CVSSV3: sirius.CVSSV3{
-			// 			Version:                       dbVulnerability.RiskScore.CVSSV3.CVSSV3.Version,
-			// 			VectorString:                  dbVulnerability.RiskScore.CVSSV3.CVSSV3.VectorString,
-			// 			AttackVector:                  dbVulnerability.RiskScore.CVSSV3.CVSSV3.AttackVector,
-			// 			AttackComplexity:              dbVulnerability.RiskScore.CVSSV3.CVSSV3.AttackComplexity,
-			// 			PrivilegesRequired:            dbVulnerability.RiskScore.CVSSV3.CVSSV3.PrivilegesRequired,
-			// 			UserInteraction:               dbVulnerability.RiskScore.CVSSV3.CVSSV3.UserInteraction,
-			// 			Scope:                         dbVulnerability.RiskScore.CVSSV3.CVSSV3.Scope,
-			// 			ConfidentialityImpact:         dbVulnerability.RiskScore.CVSSV3.CVSSV3.ConfidentialityImpact,
-			// 			IntegrityImpact:               dbVulnerability.RiskScore.CVSSV3.CVSSV3.IntegrityImpact,
-			// 			AvailabilityImpact:            dbVulnerability.RiskScore.CVSSV3.CVSSV3.AvailabilityImpact,
-			// 			BaseScore:                     dbVulnerability.RiskScore.CVSSV3.CVSSV3.BaseScore,
-			// 			BaseSeverity:                  dbVulnerability.RiskScore.CVSSV3.CVSSV3.BaseSeverity,
-			// 			ExploitCodeMaturity:           dbVulnerability.RiskScore.CVSSV3.CVSSV3.ExploitCodeMaturity,
-			// 			RemediationLevel:              dbVulnerability.RiskScore.CVSSV3.CVSSV3.RemediationLevel,
-			// 			ReportConfidence:              dbVulnerability.RiskScore.CVSSV3.CVSSV3.ReportConfidence,
-			// 			TemporalScore:                 dbVulnerability.RiskScore.CVSSV3.CVSSV3.TemporalScore,
-			// 			TemporalSeverity:              dbVulnerability.RiskScore.CVSSV3.CVSSV3.TemporalSeverity,
-			// 			ConfidentialityRequirement:    dbVulnerability.RiskScore.CVSSV3.CVSSV3.ConfidentialityRequirement,
-			// 			IntegrityRequirement:          dbVulnerability.RiskScore.CVSSV3.CVSSV3.IntegrityRequirement,
-			// 			AvailabilityRequirement:       dbVulnerability.RiskScore.CVSSV3.CVSSV3.AvailabilityRequirement,
-			// 			ModifiedAttackVector:          dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedAttackVector,
-			// 			ModifiedAttackComplexity:      dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedAttackComplexity,
-			// 			ModifiedPrivilegesRequired:    dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedPrivilegesRequired,
-			// 			ModifiedUserInteraction:       dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedUserInteraction,
-			// 			ModifiedScope:                 dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedScope,
-			// 			ModifiedConfidentialityImpact: dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedConfidentialityImpact,
-			// 			ModifiedIntegrityImpact:       dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedIntegrityImpact,
-			// 			ModifiedAvailabilityImpact:    dbVulnerability.RiskScore.CVSSV3.CVSSV3.ModifiedAvailabilityImpact,
-			// 			EnvironmentalScore:            dbVulnerability.RiskScore.CVSSV3.CVSSV3.EnvironmentalScore,
-			// 			EnvironmentalSeverity:         dbVulnerability.RiskScore.CVSSV3.CVSSV3.EnvironmentalSeverity,
-			// 		},
-			// 		ExploitabilityScore: dbVulnerability.RiskScore.CVSSV3.ExploitabilityScore,
-			// 		ImpactScore:         dbVulnerability.RiskScore.CVSSV3.ImpactScore,
-			// 	},
-			// 	CVSSV2: sirius.BaseMetricV2{
-			// 		CVSSV2: sirius.CVSSV2{
-			// 			Version:                    dbVulnerability.RiskScore.CVSSV2.CVSSV2.Version,
-			// 			VectorString:               dbVulnerability.RiskScore.CVSSV2.CVSSV2.VectorString,
-			// 			AccessVector:               dbVulnerability.RiskScore.CVSSV2.CVSSV2.AccessVector,
-			// 			AccessComplexity:           dbVulnerability.RiskScore.CVSSV2.CVSSV2.AccessComplexity,
-			// 			Authentication:             dbVulnerability.RiskScore.CVSSV2.CVSSV2.Authentication,
-			// 			ConfidentialityImpact:      dbVulnerability.RiskScore.CVSSV2.CVSSV2.ConfidentialityImpact,
-			// 			IntegrityImpact:            dbVulnerability.RiskScore.CVSSV2.CVSSV2.IntegrityImpact,
-			// 			AvailabilityImpact:         dbVulnerability.RiskScore.CVSSV2.CVSSV2.AvailabilityImpact,
-			// 			BaseScore:                  dbVulnerability.RiskScore.CVSSV2.CVSSV2.BaseScore,
-			// 			Exploitability:             dbVulnerability.RiskScore.CVSSV2.CVSSV2.Exploitability,
-			// 			RemediationLevel:           dbVulnerability.RiskScore.CVSSV2.CVSSV2.RemediationLevel,
-			// 			ReportConfidence:           dbVulnerability.RiskScore.CVSSV2.CVSSV2.ReportConfidence,
-			// 			TemporalScore:              dbVulnerability.RiskScore.CVSSV2.CVSSV2.TemporalScore,
-			// 			CollateralDamagePotential:  dbVulnerability.RiskScore.CVSSV2.CVSSV2.CollateralDamagePotential,
-			// 			TargetDistribution:         dbVulnerability.RiskScore.CVSSV2.CVSSV2.TargetDistribution,
-			// 			ConfidentialityRequirement: dbVulnerability.RiskScore.CVSSV2.CVSSV2.ConfidentialityRequirement,
-			// 			IntegrityRequirement:       dbVulnerability.RiskScore.CVSSV2.CVSSV2.IntegrityRequirement,
-			// 			AvailabilityRequirement:    dbVulnerability.RiskScore.CVSSV2.CVSSV2.AvailabilityRequirement,
-			// 			EnvironmentalScore:         dbVulnerability.RiskScore.CVSSV2.CVSSV2.EnvironmentalScore,
-			// 		},
-			// 		Severity:                dbVulnerability.RiskScore.CVSSV2.Severity,
-			// 		ExploitabilityScore:     dbVulnerability.RiskScore.CVSSV2.ExploitabilityScore,
-			// 		ImpactScore:             dbVulnerability.RiskScore.CVSSV2.ImpactScore,
-			// 		AcInsufInfo:             dbVulnerability.RiskScore.CVSSV2.AcInsufInfo,
-			// 		ObtainAllPrivilege:      dbVulnerability.RiskScore.CVSSV2.ObtainAllPrivilege,
-			// 		ObtainUserPrivilege:     dbVulnerability.RiskScore.CVSSV2.ObtainUserPrivilege,
-			// 		ObtainOtherPrivilege:    dbVulnerability.RiskScore.CVSSV2.ObtainOtherPrivilege,
-			// 		UserInteractionRequired: dbVulnerability.RiskScore.CVSSV2.UserInteractionRequired,
-			// 	},
-			// },
-		}
-		siriusVulnerabilities = append(siriusVulnerabilities, siriusVulnerability)
+	for _, vr := range hwr.Vulnerabilities {
+		siriusVulnerabilities = append(siriusVulnerabilities, sirius.Vulnerability{
+			VID:         vr.Vulnerability.VID,
+			Title:       vr.Vulnerability.Title,
+			Description: vr.Vulnerability.Description,
+			RiskScore:   vr.Vulnerability.RiskScore,
+		})
+	}
+
+	// Convert services (if any exist in the host model)
+	var siriusServices []sirius.Service
+	for _, svc := range hwr.Host.Services {
+		siriusServices = append(siriusServices, sirius.Service{
+			Port:    int(svc.ID), // Using ID as placeholder for port if needed
+			Product: svc.Name,
+		})
 	}
 
 	return sirius.Host{
-		OS:              dbHost.OS,
-		OSVersion:       dbHost.OSVersion,
-		IP:              dbHost.IP,
-		Hostname:        dbHost.Hostname,
+		HID:             hwr.Host.HID,
+		OS:              hwr.Host.OS,
+		OSVersion:       hwr.Host.OSVersion,
+		IP:              hwr.Host.IP,
+		Hostname:        hwr.Host.Hostname,
 		Ports:           siriusPorts,
-		Vulnerabilities: siriusVulnerabilities, // Use & to create a pointer
-		// ... map other fields ...
+		Services:        siriusServices,
+		Vulnerabilities: siriusVulnerabilities,
 	}
 }
 
-func MapSiriusHostToDBHost(siriusHost sirius.Host) models.Host {
-	db := postgres.GetDB() // Enable DB connection to look up existing records
+// REMOVED: MapDBHostToSiriusHost
+// This function has been replaced by convertHostWithRelationsToSiriusHost() which uses the repository pattern.
+// The old function tried to access models.Host.Ports and models.Host.Vulnerabilities which no longer exist.
+// Use HostRepository.GetHostWithRelations() and convertHostWithRelationsToSiriusHost() instead.
 
-	// Initialize empty return value in case of database issues
-	dbHost := models.Host{
-		HID:       siriusHost.HID,
-		OS:        siriusHost.OS,
-		OSVersion: siriusHost.OSVersion,
-		IP:        siriusHost.IP,
-		Hostname:  siriusHost.Hostname,
-	}
-
-	// If we have no database connection, return basic host without relationship data
-	if db == nil {
-		log.Printf("Warning: Database connection not available in MapSiriusHostToDBHost for IP %s", siriusHost.IP)
-		return dbHost
-	}
-
-	// Map Ports from sirius.Host to models.Host
-	var dbPorts []models.Port
-	for _, port := range siriusHost.Ports {
-		// Try to find an existing port by Number and protocol
-		var existingPort models.Port
-		result := db.Where("number = ? AND protocol = ?", port.Number, port.Protocol).First(&existingPort)
-
-		if result.RowsAffected > 0 {
-			// Use the existing port if found
-			dbPorts = append(dbPorts, existingPort)
-		} else {
-			// Otherwise create a new port entry
-			dbPort := models.Port{
-				Number:   port.Number,
-				Protocol: port.Protocol,
-				State:    port.State,
-			}
-			dbPorts = append(dbPorts, dbPort)
-		}
-	}
-
-	// Update our return value with found ports
-	dbHost.Ports = dbPorts
-
-	// Map Services (assuming Service has a Name field)
-	var dbServices []models.Service
-	// ! Address dbServices later
-
-	// Update our return value with found services
-	dbHost.Services = dbServices
-
-	// Map sirius.Vulnerabilities to models.Host.Vulnerabilities
-	var dbVulnerabilities []models.Vulnerability
-	for _, vulnerability := range siriusHost.Vulnerabilities {
-		// Skip empty vulnerabilities
-		if vulnerability.VID == "" {
-			continue
-		}
-
-		// Create a vulnerability instance to look up
-		var existingVuln models.Vulnerability
-
-		// Try to find existing vulnerability by v_id field (must use column name)
-		result := db.Where("v_id = ?", vulnerability.VID).First(&existingVuln)
-		if result.RowsAffected > 0 {
-			// Use the existing vulnerability if found
-			dbVulnerabilities = append(dbVulnerabilities, existingVuln)
-			continue
-		}
-
-		// If we can't find by VID, try title as a fallback
-		result = db.Where("title = ?", vulnerability.Title).First(&existingVuln)
-		if result.RowsAffected > 0 {
-			// Use the existing vulnerability if found
-			dbVulnerabilities = append(dbVulnerabilities, existingVuln)
-			continue
-		}
-
-		// If vulnerability doesn't exist yet, create a new one
-		newVuln := models.Vulnerability{
-			VID:         vulnerability.VID,
-			Description: vulnerability.Description,
-			Title:       vulnerability.Title,
-			RiskScore:   vulnerability.RiskScore,
-		}
-
-		// Save the new vulnerability to get an ID
-		if err := db.Create(&newVuln).Error; err == nil {
-			dbVulnerabilities = append(dbVulnerabilities, newVuln)
-		} else {
-			log.Printf("Failed to create vulnerability %s: %v", vulnerability.VID, err)
-		}
-	}
-
-	// Update our return value with found vulnerabilities
-	dbHost.Vulnerabilities = dbVulnerabilities
-
-	// Return the host with all relationships set up
-	return dbHost
-}
+// REMOVED: MapSiriusHostToDBHost
+// This function has been replaced by the repository pattern:
+// - Use HostRepository.UpsertHost() for host entity
+// - Use HostRepository.UpsertPort() and LinkHostPort() for ports
+// - Use HostRepository.UpsertVulnerability() and LinkHostVulnerability() for vulnerabilities
+// The old function tried to access models.Host.Ports and models.Host.Vulnerabilities which no longer exist
 
 // MapDBVulnerabilityToSiriusVulnerability maps a models.Vulnerability to a sirius.Vulnerability
 /*
@@ -696,25 +473,18 @@ type EnhancedHostData struct {
 	AgentMetadata     map[string]interface{} `json:"agent_metadata,omitempty"`
 }
 
-// GetHostWithEnhancedData retrieves host information including JSONB fields
+// GetHostWithEnhancedData retrieves host information including JSONB fields using repository pattern
 func GetHostWithEnhancedData(ip string, includeFields []string) (*EnhancedHostData, error) {
-	db := postgres.GetDB()
+	repo := NewHostRepository()
 
-	// Check if database is available
-	if db == nil {
-		log.Printf("Warning: Database not available, cannot retrieve host %s", ip)
-		return nil, fmt.Errorf("database connection not available")
+	// Get host with relations using repository
+	hostWithRelations, err := repo.GetHostWithRelations(ip)
+	if err != nil {
+		return nil, err
 	}
 
-	var dbHost models.Host
-	result := db.Preload("Ports").Preload("Vulnerabilities").Preload("Services").Where("ip = ?", ip).First(&dbHost)
-
-	if result.Error != nil {
-		return nil, result.Error
-	}
-
-	// Map the database host to a sirius.Host
-	host := MapDBHostToSiriusHost(dbHost)
+	// Convert to sirius.Host
+	host := convertHostWithRelationsToSiriusHost(hostWithRelations)
 
 	// Create enhanced data structure
 	enhancedData := &EnhancedHostData{
@@ -723,20 +493,20 @@ func GetHostWithEnhancedData(ip string, includeFields []string) (*EnhancedHostDa
 
 	// Include JSONB fields based on request
 	if len(includeFields) == 0 || stringSliceContains(includeFields, "software_inventory") || stringSliceContains(includeFields, "packages") {
-		if len(dbHost.SoftwareInventory) > 0 {
-			enhancedData.SoftwareInventory = dbHost.SoftwareInventory
+		if len(hostWithRelations.Host.SoftwareInventory) > 0 {
+			enhancedData.SoftwareInventory = hostWithRelations.Host.SoftwareInventory
 		}
 	}
 
 	if len(includeFields) == 0 || stringSliceContains(includeFields, "system_fingerprint") || stringSliceContains(includeFields, "fingerprint") {
-		if len(dbHost.SystemFingerprint) > 0 {
-			enhancedData.SystemFingerprint = dbHost.SystemFingerprint
+		if len(hostWithRelations.Host.SystemFingerprint) > 0 {
+			enhancedData.SystemFingerprint = hostWithRelations.Host.SystemFingerprint
 		}
 	}
 
 	if len(includeFields) == 0 || stringSliceContains(includeFields, "agent_metadata") || stringSliceContains(includeFields, "metadata") {
-		if len(dbHost.AgentMetadata) > 0 {
-			enhancedData.AgentMetadata = dbHost.AgentMetadata
+		if len(hostWithRelations.Host.AgentMetadata) > 0 {
+			enhancedData.AgentMetadata = hostWithRelations.Host.AgentMetadata
 		}
 	}
 

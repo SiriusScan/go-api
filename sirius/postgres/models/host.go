@@ -48,14 +48,14 @@ func (j *JSONB) Scan(value interface{}) error {
 
 type Host struct {
 	gorm.Model
-	HID                 string
-	OS                  string
-	OSVersion           string
-	IP                  string `gorm:"uniqueIndex"`
-	Hostname            string
-	Ports               []Port `gorm:"many2many:host_ports"`
-	Services            []Service
-	Vulnerabilities     []Vulnerability     `gorm:"many2many:host_vulnerabilities"`
+	HID       string
+	OS        string
+	OSVersion string
+	IP        string `gorm:"uniqueIndex"`
+	Hostname  string
+	// REMOVED: Ports []Port `gorm:"many2many:host_ports"` - circular reference eliminated
+	Services []Service
+	// REMOVED: Vulnerabilities []Vulnerability `gorm:"many2many:host_vulnerabilities"` - circular reference eliminated
 	HostVulnerabilities []HostVulnerability `gorm:"foreignKey:HostID"`
 	HostPorts           []HostPort          `gorm:"foreignKey:HostID"`
 	CPEs                []CPE
@@ -69,18 +69,38 @@ type Host struct {
 	AgentMetadata     JSONB `gorm:"type:jsonb;column:agent_metadata;default:'{}'" json:"agent_metadata,omitempty"`
 }
 
+// String returns a safe string representation without circular references
+// Uses pointer receiver to work with GORM-loaded entities
+func (h *Host) String() string {
+	if h == nil {
+		return "Host{nil}"
+	}
+	return fmt.Sprintf("Host{ID:%d, HID:%s, IP:%s, Hostname:%s, Services:%d}",
+		h.ID, h.HID, h.IP, h.Hostname, len(h.Services))
+}
+
 type Port struct {
 	gorm.Model
-	Number    int    `gorm:"not null"`  // Port number (22, 80, 443, etc.)
-	Protocol  string `gorm:"not null"`
-	State     string
-	Hosts     []Host     `gorm:"many2many:host_ports"`
+	Number   int    `gorm:"not null"` // Port number (22, 80, 443, etc.)
+	Protocol string `gorm:"not null"`
+	State    string
+	// REMOVED: Hosts []Host `gorm:"many2many:host_ports"` - circular reference eliminated
 	HostPorts []HostPort `gorm:"foreignKey:PortID"`
 }
 
 // TableName ensures GORM uses the correct table name
 func (Port) TableName() string {
 	return "ports"
+}
+
+// String returns a safe string representation without circular references
+// Uses pointer receiver to work with GORM-loaded entities
+func (p *Port) String() string {
+	if p == nil {
+		return "Port{nil}"
+	}
+	return fmt.Sprintf("Port{ID:%d, Number:%d, Protocol:%s, State:%s}",
+		p.ID, p.Number, p.Protocol, p.State)
 }
 
 // Enhanced HostPort junction table with source attribution
