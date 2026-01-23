@@ -48,10 +48,11 @@ func (j *JSONB) Scan(value interface{}) error {
 
 type Host struct {
 	gorm.Model
-	HID       string
+	HID       string `gorm:"uniqueIndex"` // Generated, globally unique host identifier
+	ClientID  uint   `gorm:"index"`       // Foreign key to Client (Prime Radiant)
 	OS        string
 	OSVersion string
-	IP        string `gorm:"uniqueIndex"`
+	IP        string `gorm:"index"` // No longer unique - same IP can exist across clients
 	Hostname  string
 	// REMOVED: Ports []Port `gorm:"many2many:host_ports"` - circular reference eliminated
 	Services []Service

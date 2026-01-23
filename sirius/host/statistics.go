@@ -52,10 +52,10 @@ func GetMostVulnerableHosts(limit int) ([]HostVulnerabilityStats, error) {
 	// 1. Total count of distinct vulnerabilities per host
 	// 2. Sum of risk scores (weighted risk score)
 	// 3. Orders by weighted risk score descending, then by vulnerability count
-	// Using h.ip as host_id since it's guaranteed to exist and is unique
+	// Note: Using COALESCE(h.h_id, h.ip) for host_id since h_id might be NULL
 	query := `
 		SELECT 
-			h.ip as host_id,
+			COALESCE(h.h_id, h.ip) as host_id,
 			h.ip as host_ip,
 			h.hostname,
 			COUNT(DISTINCT hv.vulnerability_id) as total_vulnerabilities,
@@ -64,7 +64,7 @@ func GetMostVulnerableHosts(limit int) ([]HostVulnerabilityStats, error) {
 		FROM hosts h
 		INNER JOIN host_vulnerabilities hv ON hv.host_id = h.id
 		INNER JOIN vulnerabilities v ON v.id = hv.vulnerability_id
-		GROUP BY h.id, h.ip, h.hostname, h.updated_at
+		GROUP BY h.id, h.h_id, h.ip, h.hostname, h.updated_at
 		HAVING COUNT(DISTINCT hv.vulnerability_id) > 0
 		ORDER BY weighted_risk_score DESC, total_vulnerabilities DESC
 		LIMIT ?
@@ -73,11 +73,8 @@ func GetMostVulnerableHosts(limit int) ([]HostVulnerabilityStats, error) {
 	var results []HostVulnerabilityStats
 	err := db.Raw(query, limit).Scan(&results).Error
 	if err != nil {
-		fmt.Printf("GetMostVulnerableHosts: SQL Error: %v\n", err)
-		fmt.Printf("GetMostVulnerableHosts: Query was: %s\n", query)
 		return nil, fmt.Errorf("failed to query most vulnerable hosts: %w", err)
 	}
-	fmt.Printf("GetMostVulnerableHosts: Query executed successfully, got %d results\n", len(results))
 
 	// Debug logging
 	if len(results) == 0 {
