@@ -1,7 +1,9 @@
 package host
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -10,6 +12,14 @@ import (
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 	"gorm.io/gorm"
 )
+
+// generateHostID creates a unique host identifier for scan-discovered hosts
+// Format: scan-<random-hex> to distinguish from agent-generated HIDs
+func generateHostID() string {
+	bytes := make([]byte, 8)
+	rand.Read(bytes)
+	return "scan-" + hex.EncodeToString(bytes)
+}
 
 // HostRepository provides explicit database operations for hosts without circular references
 type HostRepository struct {
@@ -25,8 +35,8 @@ func NewHostRepository() *HostRepository {
 
 // HostWithRelations represents a host with its ports and vulnerabilities loaded via explicit JOINs
 type HostWithRelations struct {
-	Host          models.Host
-	Ports         []PortRelation
+	Host            models.Host
+	Ports           []PortRelation
 	Vulnerabilities []VulnerabilityRelation
 }
 
@@ -68,16 +78,25 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 
 	if result.Error == nil {
 		// Host exists - update it
+		// Only update non-empty values to preserve existing data from earlier scans
 		updates := map[string]interface{}{
-			"hostname":  hostname,
-			"os":        os,
-			"os_version": osVersion,
 			"updated_at": time.Now(),
+		}
+		// Only update hostname if non-empty (don't overwrite with empty)
+		if hostname != "" {
+			updates["hostname"] = hostname
+		}
+		// Only update OS fields if non-empty (preserve fingerprint data from ping++)
+		if os != "" {
+			updates["os"] = os
+		}
+		if osVersion != "" {
+			updates["os_version"] = osVersion
 		}
 		if hid != "" {
 			updates["h_id"] = hid
 		}
-		
+
 		err = r.db.Model(&host).Updates(updates).Error
 		if err != nil {
 			return 0, fmt.Errorf("failed to update host: %w", err)
@@ -86,14 +105,19 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 	}
 
 	// Host doesn't exist - create it
+	// Generate a unique HID if not provided to satisfy uniqueIndex constraint
+	hostHID := hid
+	if hostHID == "" {
+		hostHID = generateHostID()
+		log.Printf("Generated HID %s for scan-discovered host %s", hostHID, ip)
+	}
+
 	newHost := models.Host{
+		HID:       hostHID,
 		IP:        ip,
 		Hostname:  hostname,
 		OS:        os,
 		OSVersion: osVersion,
-	}
-	if hid != "" {
-		newHost.HID = hid
 	}
 
 	err = r.db.Create(&newHost).Error
@@ -181,7 +205,7 @@ func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score floa
 		if score > 0 && vuln.RiskScore != score {
 			updates["risk_score"] = score
 		}
-		
+
 		if len(updates) > 1 { // More than just updated_at
 			err = r.db.Model(&vuln).Updates(updates).Error
 			if err != nil {
@@ -322,8 +346,8 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 	}
 
 	result := &HostWithRelations{
-		Host:          host,
-		Ports:         []PortRelation{},
+		Host:            host,
+		Ports:           []PortRelation{},
 		Vulnerabilities: []VulnerabilityRelation{},
 	}
 
@@ -467,8 +491,8 @@ func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error)
 			log.Printf("Warning: Failed to get relations for host %s: %v", host.IP, err)
 			// Still include the host but without relations
 			results = append(results, HostWithRelations{
-				Host:          host,
-				Ports:         []PortRelation{},
+				Host:            host,
+				Ports:           []PortRelation{},
 				Vulnerabilities: []VulnerabilityRelation{},
 			})
 			continue
@@ -478,4 +502,3 @@ func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error)
 
 	return results, nil
 }
-

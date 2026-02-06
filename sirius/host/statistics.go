@@ -181,9 +181,10 @@ func calculateAndCacheFreshStats(limit int, valkeyStore store.KVStore, cacheKey 
 	}
 
 	// Cache for next request (best effort - don't fail if caching fails)
+	// Use TTL to ensure cache expires and fresh data is fetched periodically
 	data, err := json.Marshal(response)
 	if err == nil {
-		_ = valkeyStore.SetValue(context.Background(), cacheKey, string(data))
+		_ = valkeyStore.SetValueWithTTL(context.Background(), cacheKey, string(data), CacheTTL)
 	}
 
 	return response, nil
