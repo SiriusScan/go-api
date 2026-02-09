@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/SiriusScan/go-api/sirius/postgres"
@@ -109,7 +109,7 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 	hostHID := hid
 	if hostHID == "" {
 		hostHID = generateHostID()
-		log.Printf("Generated HID %s for scan-discovered host %s", hostHID, ip)
+		slog.Debug("Generated HID for scan-discovered host", "hid", hostHID, "ip", ip)
 	}
 
 	newHost := models.Host{
@@ -381,7 +381,7 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 			&pr.Status, &pr.Notes,
 		)
 		if err != nil {
-			log.Printf("Error scanning port row: %v", err)
+			slog.Warn("Error scanning port row", "error", err)
 			continue
 		}
 
@@ -438,7 +438,7 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 			&vr.Status, &vr.Confidence, &port, &vr.ServiceInfo, &vr.Notes,
 		)
 		if err != nil {
-			log.Printf("Error scanning vulnerability row: %v", err)
+			slog.Warn("Error scanning vulnerability row", "error", err)
 			continue
 		}
 
@@ -488,7 +488,7 @@ func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error)
 	for _, host := range hosts {
 		hostWithRelations, err := r.GetHostWithRelations(host.IP)
 		if err != nil {
-			log.Printf("Warning: Failed to get relations for host %s: %v", host.IP, err)
+			slog.Warn("Failed to get relations for host", "ip", host.IP, "error", err)
 			// Still include the host but without relations
 			results = append(results, HostWithRelations{
 				Host:            host,

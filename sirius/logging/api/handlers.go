@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -132,7 +132,7 @@ func LogSubmissionHandler(w http.ResponseWriter, r *http.Request) {
 	if time.Now().Unix()%10 == 0 {
 		if err := maintainLogCount(ctx, kvStore); err != nil {
 			// Log the error but don't fail the request
-			fmt.Printf("Warning: Failed to maintain log count: %v\n", err)
+			slog.Warn("Failed to maintain log count", "error", err)
 		}
 	}
 
@@ -142,7 +142,7 @@ func LogSubmissionHandler(w http.ResponseWriter, r *http.Request) {
 		"log_id":  entry.ID,
 		"message": "Log entry stored successfully",
 	}); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 
@@ -273,7 +273,7 @@ func LogRetrievalHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 
@@ -355,7 +355,7 @@ func LogStatsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 
@@ -436,7 +436,7 @@ func LogUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Log entry updated successfully",
 		"log_id":  logID,
 	}); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 
@@ -478,7 +478,7 @@ func LogDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Log entry deleted successfully",
 		"log_id":  logID,
 	}); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 
@@ -520,7 +520,7 @@ func LogClearHandler(w http.ResponseWriter, r *http.Request) {
 		"message":       "Logs cleared successfully",
 		"deleted_count": deletedCount,
 	}); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("Failed to encode response", "error", err)
 	}
 }
 

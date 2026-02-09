@@ -2,7 +2,7 @@
 package postgres
 
 import (
-	"fmt"
+	"log/slog"
 
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 	"gorm.io/gorm"
@@ -14,9 +14,7 @@ func AddHost(db *gorm.DB, host models.Host) error {
 		return result.Error
 	}
 
-	fmt.Printf("Added host %s to database\n", host.IP)
-	fmt.Printf("=====================")
-	fmt.Println(host)
+	slog.Info("Added host to database", "ip", host.IP)
 	return nil
 }
 

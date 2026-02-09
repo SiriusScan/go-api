@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -94,13 +95,11 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 		return val, fmt.Errorf("valkey GET for key '%s' failed: %w", key, err)
 	}
 
-	// Key exists, get its string value. resp itself can be used for result conversion if no error.
 	stringValue, err := resp.ToString()
 	if err != nil {
 		return val, fmt.Errorf("failed to convert valkey reply to string for key '%s': %w", key, err)
 	}
 
-	// Return the raw string value directly
 	val = ValkeyResponse{
 		Message: ValkeyValue{Value: stringValue},
 	}
@@ -110,14 +109,12 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 // ListKeys implements KVStore by executing a KEYS command with pattern matching.
 func (s *valkeyStore) ListKeys(ctx context.Context, pattern string) ([]string, error) {
 	cmd := s.client.B().Keys().Pattern(pattern).Build()
-	resp := s.client.Do(ctx, cmd) // resp is valkey.Completed
+	resp := s.client.Do(ctx, cmd)
 
 	if err := resp.Error(); err != nil {
 		return nil, fmt.Errorf("valkey KEYS with pattern '%s' failed: %w", pattern, err)
 	}
 
-	// resp.ToArray() likely returns []valkey.ValkeyMessage or similar.
-	// We need to convert each element to a string.
 	keyMessages, err := resp.ToArray()
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert valkey KEYS reply to array for pattern '%s': %w", pattern, err)
@@ -125,9 +122,8 @@ func (s *valkeyStore) ListKeys(ctx context.Context, pattern string) ([]string, e
 
 	stringKeys := make([]string, len(keyMessages))
 	for i, keyMsg := range keyMessages {
-		s, err := keyMsg.ToString() // Assuming ValkeyMessage has ToString()
+		s, err := keyMsg.ToString()
 		if err != nil {
-			// This could happen if a key in the list is not a string, which is unusual for KEYS
 			return nil, fmt.Errorf("failed to convert key message at index %d to string in KEYS result for pattern '%s': %w", i, pattern, err)
 		}
 		stringKeys[i] = s
@@ -160,19 +156,55 @@ type ValkeyValue struct {
 }
 
 type VulnerabilitySummary struct {
-	ID          string `json:"id"`
-	Severity    string `json:"severity"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	ID          string  `json:"id"`
+	Severity    string  `json:"severity"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	CVSSScore   float64 `json:"cvss_score,omitempty"`
+	RiskScore   float64 `json:"risk_score,omitempty"`
+	ScanSource  string  `json:"scan_source,omitempty"`
+	HostID      string  `json:"host_id,omitempty"`
+	AgentID     string  `json:"agent_id,omitempty"`
+}
+
+// HostEntry represents a discovered host with canonical IP identity.
+// Multiple scanners may discover the same host; entries are merged by IP.
+type HostEntry struct {
+	ID       string   `json:"id"`
+	IP       string   `json:"ip"`
+	Hostname string   `json:"hostname,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Sources  []string `json:"sources,omitempty"`
+}
+
+// SubScanProgress tracks completion progress for a sub-scan.
+type SubScanProgress struct {
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+	Label     string `json:"label,omitempty"`
+}
+
+// SubScan represents a modular scanner contribution to a scan.
+// Each scanner type (network, agent, cloud, etc.) gets its own entry.
+// Metadata is stored as json.RawMessage so that scanners that don't
+// understand another scanner's metadata will preserve it verbatim
+// during read-modify-write cycles.
+type SubScan struct {
+	Type     string          `json:"type"`
+	Enabled  bool            `json:"enabled"`
+	Status   string          `json:"status"`
+	Progress SubScanProgress `json:"progress"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 type ScanResult struct {
 	ID              string                 `json:"id"`
 	Status          string                 `json:"status"`
 	Targets         []string               `json:"targets"`
-	Hosts           []string               `json:"hosts"`
+	Hosts           []HostEntry            `json:"hosts"`
 	HostsCompleted  int                    `json:"hosts_completed"`
 	Vulnerabilities []VulnerabilitySummary `json:"vulnerabilities"`
 	StartTime       string                 `json:"start_time"`
 	EndTime         string                 `json:"end_time,omitempty"`
+	SubScans        map[string]SubScan     `json:"sub_scans,omitempty"`
 }

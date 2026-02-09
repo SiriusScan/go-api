@@ -2,7 +2,7 @@ package host
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres"
@@ -185,7 +185,7 @@ func GetAllVulnerabilities() ([]VulnerabilitySummary, error) {
 // AddHost Chain: SDK Consumer (e.g. Sirius REST API) -> SDK go-api sirius/host (Here)
 // Legacy function - uses repository pattern with "legacy" source for backward compatibility
 func AddHost(host sirius.Host) error {
-	log.Printf("Adding or updating host %s in database (legacy mode)", host.IP)
+	slog.Info("Adding or updating host in database (legacy mode)", "ip", host.IP)
 
 	// Use legacy source for backward compatibility
 	legacySource := models.ScanSource{

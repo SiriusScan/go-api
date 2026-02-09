@@ -3,7 +3,7 @@ package logging
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -161,14 +161,13 @@ func (ep *EventPersistence) flushBufferUnsafe() error {
 	// Batch insert events
 	err := ep.db.CreateInBatches(ep.buffer, len(ep.buffer)).Error
 	if err != nil {
-		log.Printf("⚠️  Failed to flush events to PostgreSQL: %v", err)
+		slog.Error("Failed to flush events to PostgreSQL", "error", err)
 		// Don't return error - we don't want to stop the logging client
 		// Events will be retried on next flush
 		return err
 	}
 
-	// Log success
-	log.Printf("✅ Flushed %d events to PostgreSQL", len(ep.buffer))
+	slog.Debug("Flushed events to PostgreSQL", "count", len(ep.buffer))
 
 	// Clear buffer
 	ep.buffer = ep.buffer[:0]
@@ -188,7 +187,7 @@ func (ep *EventPersistence) flushRoutine() {
 			if len(ep.buffer) > 0 {
 				err := ep.flushBufferUnsafe()
 				if err != nil {
-					log.Printf("⚠️  Periodic flush failed: %v", err)
+					slog.Error("Periodic flush failed", "error", err)
 				}
 			}
 			ep.mutex.Unlock()

@@ -4,6 +4,7 @@ package postgres
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -78,8 +79,7 @@ func getConnectionString() string {
 		connectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 			dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode)
 
-		log.Printf("Using environment variables for database connection: host=%s dbname=%s user=%s port=%s",
-			dbHost, dbName, dbUser, dbPort)
+		slog.Info("Using environment variables for database connection", "host", dbHost, "dbname", dbName, "user", dbUser, "port", dbPort)
 
 		return connectionString
 	}
@@ -88,19 +88,19 @@ func getConnectionString() string {
 	// otherwise use localhost
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		// We're in a container, use the service name
-		log.Println("Detected container environment, using sirius-postgres hostname")
+		slog.Info("Detected container environment, using sirius-postgres hostname")
 		return "host=sirius-postgres user=postgres password=postgres dbname=sirius port=5432 sslmode=disable"
 	}
 
 	// We're on the host, use localhost
-	log.Println("Detected host environment, using localhost")
+	slog.Info("Detected host environment, using localhost")
 	return "host=localhost user=postgres password=postgres dbname=sirius port=5432 sslmode=disable"
 }
 
 // init initializes the database connection
 func init() {
 	// Set up a connection to the database
-	log.Println("Initializing PostgreSQL database connection...")
+	slog.Info("Initializing PostgreSQL database connection...")
 
 	// Connect with retries
 	connectWithRetries()
@@ -113,9 +113,9 @@ func connectWithRetries() {
 
 	// If connection failed, log the error but allow the application to continue
 	if connectionError != nil {
-		log.Printf("⚠️ Initial database connection failed: %v", connectionError)
-		log.Println("Application will continue without database functionality")
-		log.Println("Database operations will be retried automatically")
+		slog.Warn("Initial database connection failed", "error", connectionError)
+		slog.Info("Application will continue without database functionality")
+		slog.Info("Database operations will be retried automatically")
 	}
 }
 
@@ -137,8 +137,8 @@ func connect() {
 	// Get appropriate connection string
 	pgConnString := getConnectionString()
 
-	// Connect to PostgreSQL database
-	log.Printf("Connecting to PostgreSQL database: %s", pgConnString)
+	// Connect to PostgreSQL database (connection string intentionally omitted from logs)
+	slog.Info("Connecting to PostgreSQL database...")
 	db, err = gorm.Open(postgres.Open(pgConnString), &gorm.Config{
 		Logger: newLogger,
 	})
@@ -152,7 +152,7 @@ func connect() {
 			sqlDB.SetMaxIdleConns(10)                 // Maximum number of idle connections
 			sqlDB.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
 			sqlDB.SetConnMaxIdleTime(1 * time.Minute) // Maximum idle time before closing
-			log.Println("✅ Database connection pool configured")
+			slog.Info("Database connection pool configured")
 		}
 	}
 
@@ -163,7 +163,7 @@ func connect() {
 	}
 
 	// Connection succeeded, initialize schema
-	log.Println("✅ PostgreSQL database connection established")
+	slog.Info("PostgreSQL database connection established")
 	isInitialized = true
 	connectionError = nil
 
@@ -173,7 +173,7 @@ func connect() {
 
 // initializeSchema sets up the database schema
 func initializeSchema() {
-	log.Println("Initializing database schema...")
+	slog.Info("Initializing database schema...")
 
 	// Drop existing tables in the correct order
 	dropTablesInOrder()
@@ -181,12 +181,12 @@ func initializeSchema() {
 	// Migrate schema
 	migrateSchema()
 
-	log.Println("✅ Database schema initialized successfully")
+	slog.Info("Database schema initialized successfully")
 }
 
 // dropTablesInOrder drops all tables in the correct order to avoid foreign key constraint errors
 func dropTablesInOrder() {
-	log.Println("Dropping existing tables...")
+	slog.Debug("Dropping existing tables...")
 
 	// First drop junction tables to avoid foreign key constraints
 	junctionTables := []string{
@@ -236,17 +236,17 @@ func dropTablesInOrder() {
 		db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", table))
 	}
 
-	log.Println("All tables dropped successfully")
+	slog.Debug("All tables dropped successfully")
 }
 
 // migrateSchema creates all tables in the correct order
 func migrateSchema() {
-	log.Println("Migrating schema...")
+	slog.Debug("Migrating schema...")
 
 	// Step 1: Base tables without dependencies
 	err := db.AutoMigrate(&models.Agent{})
 	if err != nil {
-		log.Printf("⚠️ Failed to migrate base tables: %v", err)
+		slog.Warn("Failed to migrate base tables", "error", err)
 		return
 	}
 
@@ -257,7 +257,7 @@ func migrateSchema() {
 		&models.Vulnerability{},
 	)
 	if err != nil {
-		log.Printf("⚠️ Failed to migrate entity tables: %v", err)
+		slog.Warn("Failed to migrate entity tables", "error", err)
 		return
 	}
 
@@ -272,7 +272,7 @@ func migrateSchema() {
 		&models.Event{},
 	)
 	if err != nil {
-		log.Printf("⚠️ Failed to migrate relationship tables: %v", err)
+		slog.Warn("Failed to migrate relationship tables", "error", err)
 		return
 	}
 
@@ -291,7 +291,7 @@ func migrateSchema() {
 		&models.BaseMetricV2{},
 	)
 	if err != nil {
-		log.Printf("⚠️ Failed to migrate CVE tables: %v", err)
+		slog.Warn("Failed to migrate CVE tables", "error", err)
 		return
 	}
 
@@ -301,17 +301,17 @@ func migrateSchema() {
 
 // enhanceJunctionTables replaces the simple many-to-many junction tables with enhanced ones
 func enhanceJunctionTables() {
-	log.Println("Enhancing junction tables with source attribution...")
+	slog.Debug("Enhancing junction tables with source attribution...")
 
 	// Drop the simple junction tables created by GORM
 	err := db.Exec("DROP TABLE IF EXISTS host_vulnerabilities CASCADE").Error
 	if err != nil {
-		log.Printf("⚠️ Failed to drop simple host_vulnerabilities table: %v", err)
+		slog.Warn("Failed to drop simple host_vulnerabilities table", "error", err)
 	}
 
 	err = db.Exec("DROP TABLE IF EXISTS host_ports CASCADE").Error
 	if err != nil {
-		log.Printf("⚠️ Failed to drop simple host_ports table: %v", err)
+		slog.Warn("Failed to drop simple host_ports table", "error", err)
 	}
 
 	// Create enhanced junction tables
@@ -334,7 +334,7 @@ func enhanceJunctionTables() {
 		)
 	`).Error
 	if err != nil {
-		log.Printf("⚠️ Failed to create enhanced host_vulnerabilities table: %v", err)
+		slog.Warn("Failed to create enhanced host_vulnerabilities table", "error", err)
 		return
 	}
 
@@ -354,7 +354,7 @@ func enhanceJunctionTables() {
 		)
 	`).Error
 	if err != nil {
-		log.Printf("⚠️ Failed to create enhanced host_ports table: %v", err)
+		slog.Warn("Failed to create enhanced host_ports table", "error", err)
 		return
 	}
 
@@ -372,11 +372,11 @@ func enhanceJunctionTables() {
 	for _, indexSQL := range indexes {
 		err = db.Exec(indexSQL).Error
 		if err != nil {
-			log.Printf("⚠️ Warning: Failed to create index: %v", err)
+			slog.Warn("Failed to create index", "error", err)
 		}
 	}
 
-	log.Println("✅ Junction tables enhanced with source attribution")
+	slog.Info("Junction tables enhanced with source attribution")
 }
 
 // GetDB returns the database connection, initializing it if necessary
@@ -389,7 +389,7 @@ func GetDB() *gorm.DB {
 	// If we haven't tried to connect yet or connection failed
 	if connectionError != nil {
 		// Attempt to reconnect
-		log.Println("Attempting to reconnect to PostgreSQL database...")
+		slog.Debug("Attempting to reconnect to PostgreSQL database...")
 		connect()
 
 		// If reconnection succeeded, return the connection
@@ -398,7 +398,7 @@ func GetDB() *gorm.DB {
 		}
 
 		// If reconnection failed, log the error
-		log.Printf("⚠️ Database reconnection failed: %v", connectionError)
+		slog.Warn("Database reconnection failed", "error", connectionError)
 		return nil
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
@@ -481,14 +482,14 @@ func (lc *LoggingClient) submitLog(entry LogEntry) {
 	if lc.config.EnablePostgresEvents && lc.eventPersistence != nil {
 		if err := lc.eventPersistence.StoreEvent(sanitizedEntry); err != nil {
 			// Log error but don't fail - continue with HTTP submission
-			fmt.Printf("⚠️  Failed to store event in PostgreSQL: %v\n", err)
+			slog.Error("Failed to store event in PostgreSQL", "error", err)
 		}
 	}
 
 	// Serialize the log entry for HTTP submission to Valkey
 	body, err := json.Marshal(sanitizedEntry)
 	if err != nil {
-		fmt.Printf("Failed to marshal log entry: %v\n", err)
+		slog.Error("Failed to marshal log entry", "error", err)
 		return
 	}
 
@@ -603,7 +604,7 @@ func (lc *LoggingClient) submitWithRetry(body []byte) {
 	for attempt := 0; attempt <= lc.config.MaxRetries; attempt++ {
 		req, err := http.NewRequest("POST", lc.config.APIBaseURL, bytes.NewBuffer(body))
 		if err != nil {
-			fmt.Printf("Failed to create log request: %v\n", err)
+			slog.Error("Failed to create log request", "error", err)
 			return
 		}
 

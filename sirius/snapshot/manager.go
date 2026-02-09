@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -40,7 +40,7 @@ func (sm *SnapshotManager) CreateSnapshot(ctx context.Context, snapshotID string
 	// Cleanup old snapshots after creating new one
 	if err := sm.CleanupOldSnapshots(ctx); err != nil {
 		// Log but don't fail on cleanup error
-		log.Printf("Warning: failed to cleanup old snapshots: %v\n", err)
+		slog.Warn("Failed to cleanup old snapshots", "error", err)
 	}
 
 	return snapshot, nil
@@ -136,7 +136,7 @@ func (sm *SnapshotManager) CleanupOldSnapshots(ctx context.Context) error {
 		key := fmt.Sprintf("vuln:snapshot:%s", snapshotID)
 		if err := sm.kvStore.DeleteValue(ctx, key); err != nil {
 			// Log but continue cleanup
-			log.Printf("Warning: failed to delete old snapshot %s: %v\n", key, err)
+			slog.Warn("Failed to delete old snapshot", "key", key, "error", err)
 		}
 	}
 

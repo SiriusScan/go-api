@@ -1,7 +1,7 @@
 package api
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -24,7 +24,7 @@ func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte(`{"status":"healthy","service":"logging-api"}`)); err != nil {
-			log.Printf("Failed to write health response: %v", err)
+			slog.Error("Failed to write health response", "error", err)
 		}
 	})
 
@@ -44,13 +44,13 @@ func NewLoggingAPIServer(addr string) *LoggingAPIServer {
 
 // Start starts the logging API server
 func (s *LoggingAPIServer) Start() error {
-	log.Printf("Starting logging API server on %s", s.server.Addr)
+	slog.Info("Starting logging API server", "addr", s.server.Addr)
 	return s.server.ListenAndServe()
 }
 
 // Stop stops the logging API server
 func (s *LoggingAPIServer) Stop() error {
-	log.Printf("Stopping logging API server")
+	slog.Info("Stopping logging API server")
 	return s.server.Close()
 }
 

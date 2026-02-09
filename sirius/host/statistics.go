@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/SiriusScan/go-api/sirius/postgres"
@@ -76,12 +77,7 @@ func GetMostVulnerableHosts(limit int) ([]HostVulnerabilityStats, error) {
 		return nil, fmt.Errorf("failed to query most vulnerable hosts: %w", err)
 	}
 
-	// Debug logging
-	if len(results) == 0 {
-		fmt.Printf("GetMostVulnerableHosts: Query returned 0 results (limit=%d)\n", limit)
-	} else {
-		fmt.Printf("GetMostVulnerableHosts: Query returned %d results\n", len(results))
-	}
+	slog.Debug("GetMostVulnerableHosts query completed", "results", len(results), "limit", limit)
 
 	// For each host, get severity counts using existing function
 	for i := range results {
@@ -118,7 +114,7 @@ func GetMostVulnerableHostsCached(limit int) (VulnerableHostsResponse, error) {
 	valkeyStore, err := store.NewValkeyStore()
 	if err != nil {
 		// If Valkey is unavailable, fall back to direct calculation
-		fmt.Printf("GetMostVulnerableHostsCached: Valkey unavailable, calculating fresh\n")
+		slog.Debug("GetMostVulnerableHostsCached: Valkey unavailable, calculating fresh")
 		return calculateFreshStats(limit)
 	}
 	defer valkeyStore.Close()
@@ -131,14 +127,14 @@ func GetMostVulnerableHostsCached(limit int) (VulnerableHostsResponse, error) {
 		// Cache hit - unmarshal and return
 		var response VulnerableHostsResponse
 		if err := json.Unmarshal([]byte(cached.Message.Value), &response); err == nil {
-			fmt.Printf("GetMostVulnerableHostsCached: Cache hit, returning %d hosts\n", len(response.Hosts))
+			slog.Debug("GetMostVulnerableHostsCached: cache hit", "hosts", len(response.Hosts))
 			response.Cached = true
 			return response, nil
 		}
-		fmt.Printf("GetMostVulnerableHostsCached: Cache unmarshal failed, recalculating\n")
+		slog.Debug("GetMostVulnerableHostsCached: cache unmarshal failed, recalculating")
 		// If unmarshal fails, fall through to recalculate
 	} else {
-		fmt.Printf("GetMostVulnerableHostsCached: Cache miss, calculating fresh\n")
+		slog.Debug("GetMostVulnerableHostsCached: cache miss, calculating fresh")
 	}
 
 	// Cache miss or stale - calculate fresh and cache
