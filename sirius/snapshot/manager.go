@@ -156,4 +156,3 @@ func (sm *SnapshotManager) GetLatestSnapshot(ctx context.Context) (*store.Vulner
 
 	return sm.GetSnapshot(ctx, snapshotIDs[0])
 }
-
