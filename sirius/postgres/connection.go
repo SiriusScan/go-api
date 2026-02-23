@@ -270,6 +270,7 @@ func migrateSchema() {
 		&models.HostVulnerability{},
 		&models.HostPort{},
 		&models.Event{},
+		&models.ScanHistoryEntry{},
 	)
 	if err != nil {
 		slog.Warn("Failed to migrate relationship tables", "error", err)
