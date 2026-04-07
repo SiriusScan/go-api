@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/SiriusScan/go-api/sirius/infraauth"
 )
 
 // LoggingClient provides a centralized way to send structured logs to the API
@@ -609,6 +611,9 @@ func (lc *LoggingClient) submitWithRetry(body []byte) {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		if key, err := infraauth.LoadSiriusAPIKey(); err == nil && key != "" {
+			req.Header.Set("X-API-Key", key)
+		}
 
 		resp, err := lc.httpClient.Do(req)
 		if err != nil {
