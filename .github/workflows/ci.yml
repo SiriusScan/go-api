@@ -36,7 +36,11 @@ jobs:
           only-new-issues: true
 
       - name: Test
-        run: go test -v -race ./...
+        # `-short` skips the integration tests in sirius/host that need
+        # a live Postgres on localhost:5432, which CI does not provide.
+        # Pre-existing breakage; the integration suite still runs in
+        # the container-testing harness in the main Sirius repo.
+        run: go test -v -race -short ./...
 
   release:
     name: Create Release

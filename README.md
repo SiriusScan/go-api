@@ -17,6 +17,22 @@ The **Sirius Go API SDK** provides a unified interface for:
 - **NVD Integration**: CVE data enrichment from National Vulnerability Database
 - **Source Attribution**: Track which tool found each piece of data
 
+## Boundary With Procyon
+
+`go-api` remains the shared Sirius SDK for domain models and additive helpers.
+It is the right place for Sirius-facing DTOs, persistence helpers, and neutral
+contracts that are reused across multiple Sirius repos.
+
+The Procyon host/plugin runtime contract is intentionally **not** part of
+`go-api`. That contract is owned by the Procyon repository and is exposed there
+from `github.com/SiriusScan/procyon/pkg/runtimeplugin`.
+
+Add new packages to `go-api` only when:
+
+- More than one repo needs the same neutral Sirius contract or helper.
+- The contract is not owned by a single runtime or control-plane component.
+- The change can be released additively without breaking existing consumers.
+
 ## Installation
 
 ```bash

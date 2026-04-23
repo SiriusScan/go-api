@@ -12,6 +12,9 @@ import (
 
 // TestRepositoryCircularReferences tests that our repository pattern doesn't create circular references
 func TestRepositoryCircularReferences(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Postgres on localhost:5432; run without -short to enable")
+	}
 	t.Log("\n🔍 Testing Repository Pattern for Circular References")
 
 	// Initialize database
@@ -180,6 +183,9 @@ func TestRepositoryCircularReferences(t *testing.T) {
 
 // TestRepositoryUpsertOperations tests individual repository operations
 func TestRepositoryUpsertOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Postgres on localhost:5432; run without -short to enable")
+	}
 	t.Log("\n🔍 Testing Individual Repository Operations")
 
 	db := postgres.GetDB()
