@@ -171,17 +171,31 @@ func connect() {
 	initializeSchema()
 }
 
-// initializeSchema sets up the database schema
+// initializeSchema optionally applies GORM AutoMigrate on connect.
+// Production schema changes must go through sirius/migrate (schema_migrations_core).
+// Set SIRIUS_SCHEMA_AUTO_MIGRATE=true for local/dev convenience only.
+// Set SIRIUS_SCHEMA_FORCE_RESET=true to drop all tables before AutoMigrate (tests only).
 func initializeSchema() {
-	slog.Info("Initializing database schema...")
+	autoMigrate := os.Getenv("SIRIUS_SCHEMA_AUTO_MIGRATE") == "true"
+	forceReset := os.Getenv("SIRIUS_SCHEMA_FORCE_RESET") == "true"
 
-	// Drop existing tables in the correct order
-	dropTablesInOrder()
+	if !autoMigrate {
+		slog.Info("Skipping schema AutoMigrate on connect; use go-api migrate command for schema changes")
+		return
+	}
 
-	// Migrate schema
-	migrateSchema()
+	slog.Info("Initializing database schema via AutoMigrate (SIRIUS_SCHEMA_AUTO_MIGRATE=true)")
 
-	slog.Info("Database schema initialized successfully")
+	if forceReset {
+		slog.Warn("SIRIUS_SCHEMA_FORCE_RESET=true: dropping all tables before AutoMigrate")
+		dropTablesInOrder()
+	}
+
+	if err := migrateSchema(db); err != nil {
+		slog.Error("Database schema AutoMigrate failed", "error", err)
+		return
+	}
+	slog.Info("Database schema AutoMigrate completed")
 }
 
 // dropTablesInOrder drops all tables in the correct order to avoid foreign key constraint errors
@@ -239,30 +253,26 @@ func dropTablesInOrder() {
 	slog.Debug("All tables dropped successfully")
 }
 
-// migrateSchema creates all tables in the correct order
-func migrateSchema() {
+// migrateSchema creates all tables in the correct order (additive only).
+func migrateSchema(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("database connection is nil")
+	}
 	slog.Debug("Migrating schema...")
 
-	// Step 1: Base tables without dependencies
-	err := db.AutoMigrate(&models.Agent{})
-	if err != nil {
-		slog.Warn("Failed to migrate base tables", "error", err)
-		return
+	if err := conn.AutoMigrate(&models.Agent{}); err != nil {
+		return fmt.Errorf("base tables: %w", err)
 	}
 
-	// Step 2: Entity tables
-	err = db.AutoMigrate(
+	if err := conn.AutoMigrate(
 		&models.Host{},
 		&models.Port{},
 		&models.Vulnerability{},
-	)
-	if err != nil {
-		slog.Warn("Failed to migrate entity tables", "error", err)
-		return
+	); err != nil {
+		return fmt.Errorf("entity tables: %w", err)
 	}
 
-	// Step 3: Relationship and dependent tables
-	err = db.AutoMigrate(
+	if err := conn.AutoMigrate(
 		&models.Service{},
 		&models.User{},
 		&models.Note{},
@@ -271,14 +281,11 @@ func migrateSchema() {
 		&models.HostPort{},
 		&models.Event{},
 		&models.ScanHistoryEntry{},
-	)
-	if err != nil {
-		slog.Warn("Failed to migrate relationship tables", "error", err)
-		return
+	); err != nil {
+		return fmt.Errorf("relationship tables: %w", err)
 	}
 
-	// Step 4: CVE-related tables
-	err = db.AutoMigrate(
+	if err := conn.AutoMigrate(
 		&models.CVEData{},
 		&models.CVEItem{},
 		&models.CVEDataMeta{},
@@ -290,14 +297,24 @@ func migrateSchema() {
 		&models.CpeMatch{},
 		&models.Impact{},
 		&models.BaseMetricV2{},
-	)
-	if err != nil {
-		slog.Warn("Failed to migrate CVE tables", "error", err)
-		return
+	); err != nil {
+		return fmt.Errorf("CVE tables: %w", err)
 	}
 
-	// Step 5: Post-migration - Replace simple junction tables with enhanced ones
-	enhanceJunctionTables()
+	// Enhanced junction tables (source attribution) are owned by the
+	// schema_migrations_core migrator (steps 002/003). Do not DROP/recreate here.
+	return nil
+}
+
+// AutoMigrateSchema runs GORM AutoMigrate for core models without dropping tables.
+// Used by the ledger migrator baseline step and by SIRIUS_SCHEMA_AUTO_MIGRATE.
+func AutoMigrateSchema() error {
+	return AutoMigrateSchemaDB(db)
+}
+
+// AutoMigrateSchemaDB runs GORM AutoMigrate against the provided connection.
+func AutoMigrateSchemaDB(conn *gorm.DB) error {
+	return migrateSchema(conn)
 }
 
 // enhanceJunctionTables replaces the simple many-to-many junction tables with enhanced ones
