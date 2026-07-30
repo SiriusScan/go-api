@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,14 @@ func TestMigrationsAreOrderedAndUnique(t *testing.T) {
 func TestLedgerTableName(t *testing.T) {
 	if ledgerTable != "schema_migrations_core" {
 		t.Fatalf("unexpected ledger table name: %s", ledgerTable)
+	}
+}
+
+func TestVulnerabilityIndexUsesPersistedColumnName(t *testing.T) {
+	if !strings.Contains(vulnerabilityVIDIndexSQL, "vulnerabilities(v_id)") {
+		t.Fatalf("vulnerability index must use the GORM column v_id: %s", vulnerabilityVIDIndexSQL)
+	}
+	if strings.Contains(vulnerabilityVIDIndexSQL, "vulnerabilities(vid)") {
+		t.Fatalf("vulnerability index uses nonexistent column vid: %s", vulnerabilityVIDIndexSQL)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const vulnerabilityVIDIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS idx_vulnerabilities_vid ON vulnerabilities(v_id)`
+
 func execAll(db *gorm.DB, statements []string) error {
 	for _, sql := range statements {
 		if err := db.Exec(sql).Error; err != nil {
@@ -143,7 +145,7 @@ func apply005(db *gorm.DB) error {
 	}
 
 	statements := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vulnerabilities_vid ON vulnerabilities(vid)`,
+		vulnerabilityVIDIndexSQL,
 		`CREATE INDEX IF NOT EXISTS idx_hosts_ip ON hosts(ip)`,
 		`CREATE INDEX IF NOT EXISTS idx_ports_number ON ports(number)`,
 		`CREATE INDEX IF NOT EXISTS idx_host_vulnerabilities_host_id ON host_vulnerabilities(host_id)`,
