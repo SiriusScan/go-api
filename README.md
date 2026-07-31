@@ -16,6 +16,7 @@ The **Sirius Go API SDK** provides a unified interface for:
 - **Key-Value Store**: ValKey/Redis operations
 - **NVD Integration**: CVE data enrichment from National Vulnerability Database
 - **Source Attribution**: Track which tool found each piece of data
+- **API Modules**: Versioned compile-time `Module` contract and Community registration seam (`sirius/module`)
 
 ## Boundary With Procyon
 
