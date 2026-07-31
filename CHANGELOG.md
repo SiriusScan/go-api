@@ -11,8 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sirius/module`: versioned compile-time `Module` contract (`ContractVersion=v1`) with
   `RegisterRoutes` / `RegisterJobs` / `RegisterEventHandlers` / `RequiredCapabilities` /
-  `Health`, Community registration seam (`modules_community.go`), `RouteSetter`
-  compatibility adapter, and allow-all capability middleware hook (no licensing yet).
+  `Health`, Community ordering helper (`RegisterCommunity` / `CommunityCore`),
+  `RouteSetter` compatibility adapter, registry lifecycle (`RegisterAll` / single
+  `Mount`), order-preserving `RouteInventory`, and allow-all capability middleware
+  hook (no licensing yet).
+
+### Changed
+
+- `AdaptRouteSetter` now returns `(Module, error)` and rejects nil/typed-nil setters.
+- `SetupRoutes` now returns `error` and rejects nil/typed-nil setters.
+- `CommunityModuleIDs` is a function returning a defensive copy (not a mutable slice).
+- Community/Pro composition belongs in the consuming API binary; go-api does not claim
+  that Pro replaces an SDK file.
 
 ## [0.0.11] - 2025-10-26
 
