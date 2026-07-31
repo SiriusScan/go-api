@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sirius/module`: versioned compile-time `Module` contract (`ContractVersion=v1`) with
+  `RegisterRoutes` / `RegisterJobs` / `RegisterEventHandlers` / `RequiredCapabilities` /
+  `Health`, Community registration seam (`modules_community.go`), `RouteSetter`
+  compatibility adapter, and allow-all capability middleware hook (no licensing yet).
+
 ## [0.0.11] - 2025-10-26
 
 ### Fixed

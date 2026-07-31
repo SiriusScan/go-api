@@ -1,0 +1,12 @@
+community.host
+community.app
+community.vulnerability
+community.template
+community.script
+community.agent_template_repository
+community.agent_template
+community.event
+community.snapshot
+community.statistics
+community.scan
+community.apikey
