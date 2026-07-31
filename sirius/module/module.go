@@ -1,10 +1,12 @@
-// Package module defines the versioned compile-time API Module contract and
-// Community registration seam for Sirius API extension (ADR-004).
+// Package module defines the versioned compile-time API Module contract for
+// Sirius API extension (ADR-004).
 //
-// Contracts are intentionally minimal and testable. Pro builds replace
-// modules_community.go to register proprietary modules without runtime plugin
-// loading. Licensing/entitlements are not implemented here; the capability
-// middleware hook defaults to allow/no-op for Community.
+// go-api owns the contract, registry lifecycle, and Community ordering helper.
+// Consuming API binaries (sirius-api Community builds and private Pro overlays)
+// perform compile-time composition by constructing Modules and calling
+// Register / RegisterCommunity / Mount. There is no runtime plugin loading.
+// Licensing/entitlements are not implemented here; the capability middleware
+// hook defaults to allow/no-op for Community.
 package module
 
 import (
