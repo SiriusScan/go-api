@@ -52,8 +52,11 @@ type Host struct {
 	ClientID  uint   `gorm:"index"`       // Foreign key to Client (Prime Radiant)
 	OS        string
 	OSVersion string
-	IP        string `gorm:"index"` // No longer unique - same IP can exist across clients
+	IP        string `gorm:"index"` // Same IP allowed across owners; see owner+ip unique index
 	Hostname  string
+	// OwnerSubjectID scopes inventory per student/tenant. Empty = legacy/admin global row.
+	// Composite uniqueness with IP is enforced by migration 008 (idx_hosts_owner_ip).
+	OwnerSubjectID string `gorm:"column:owner_subject_id;index;default:''" json:"owner_subject_id,omitempty"`
 	// REMOVED: Ports []Port `gorm:"many2many:host_ports"` - circular reference eliminated
 	Services []Service
 	// REMOVED: Vulnerabilities []Vulnerability `gorm:"many2many:host_vulnerabilities"` - circular reference eliminated

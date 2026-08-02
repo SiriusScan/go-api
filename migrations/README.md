@@ -36,7 +36,7 @@ database no longer drops tables by default.
 
 The numbered directories (`002_source_attribution`, …) remain for historical
 reference and one-off debugging. New deployments must use `cmd/migrate`, which
-applies equivalent idempotent steps (`001_baseline` … `007_...`).
+applies equivalent idempotent steps (`001_baseline` … `008_...`).
 
 ## Ledger
 

@@ -2,6 +2,7 @@ package host
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -13,12 +14,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// generateHostID creates a unique host identifier for scan-discovered hosts
-// Format: scan-<random-hex> to distinguish from agent-generated HIDs
-func generateHostID() string {
+const hostSelectColumns = "id, h_id, os, os_version, ip, hostname, owner_subject_id, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at"
+
+// generateHostID creates a unique host identifier for scan-discovered hosts.
+// Format: scan-<random-hex> for legacy/empty owner; scan-<ownerDigest>-<random>
+// when owned so HID stays globally unique across same-IP student rows.
+func generateHostID(ownerSubjectID string) string {
 	bytes := make([]byte, 8)
 	rand.Read(bytes)
-	return "scan-" + hex.EncodeToString(bytes)
+	if ownerSubjectID == "" {
+		return "scan-" + hex.EncodeToString(bytes)
+	}
+	sum := sha256.Sum256([]byte(ownerSubjectID))
+	return "scan-" + hex.EncodeToString(sum[:4]) + "-" + hex.EncodeToString(bytes)
 }
 
 // HostRepository provides explicit database operations for hosts without circular references
@@ -65,16 +73,20 @@ type VulnerabilityRelation struct {
 	Notes         string
 }
 
-// UpsertHost creates or updates a host and returns its ID
-func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (hostID uint, err error) {
+// UpsertHost creates or updates a host and returns its ID.
+// When ownerSubjectID is non-empty, lookup/create is scoped to (owner, ip).
+// Empty ownerSubjectID uses legacy find-by-ip (community/admin global inventory).
+func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid, ownerSubjectID string) (hostID uint, err error) {
 	if r.db == nil {
 		return 0, fmt.Errorf("database connection not available")
 	}
 
 	var host models.Host
-	result := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, created_at, updated_at, deleted_at").
-		Where("ip = ?", ip).
-		First(&host)
+	// Owned: exact (owner, ip). Empty owner: legacy/global row only (owner_subject_id=''),
+	// so admin/community upserts do not latch onto a student's same-IP inventory.
+	query := r.db.Select("id, h_id, os, os_version, ip, hostname, owner_subject_id, agent_id, created_at, updated_at, deleted_at").
+		Where("ip = ? AND owner_subject_id = ?", ip, ownerSubjectID)
+	result := query.First(&host)
 
 	if result.Error == nil {
 		// Host exists - update it
@@ -108,16 +120,17 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 	// Generate a unique HID if not provided to satisfy uniqueIndex constraint
 	hostHID := hid
 	if hostHID == "" {
-		hostHID = generateHostID()
-		slog.Debug("Generated HID for scan-discovered host", "hid", hostHID, "ip", ip)
+		hostHID = generateHostID(ownerSubjectID)
+		slog.Debug("Generated HID for scan-discovered host", "hid", hostHID, "ip", ip, "owner", ownerSubjectID)
 	}
 
 	newHost := models.Host{
-		HID:       hostHID,
-		IP:        ip,
-		Hostname:  hostname,
-		OS:        os,
-		OSVersion: osVersion,
+		HID:            hostHID,
+		IP:             ip,
+		Hostname:       hostname,
+		OS:             os,
+		OSVersion:      osVersion,
+		OwnerSubjectID: ownerSubjectID,
 	}
 
 	err = r.db.Create(&newHost).Error
@@ -330,17 +343,24 @@ func (r *HostRepository) LinkHostVulnerability(hostID, vulnID uint, source model
 	return nil
 }
 
-// GetHostWithRelations retrieves a host with ports and vulnerabilities using explicit JOINs
-func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, error) {
+// GetHostWithRelations retrieves a host with ports and vulnerabilities using explicit JOINs.
+// When ownerSubjectID is non-empty, the host must match that owner; empty uses legacy find-by-ip.
+func (r *HostRepository) GetHostWithRelations(ip string, ownerSubjectID string) (*HostWithRelations, error) {
 	if r.db == nil {
 		return nil, fmt.Errorf("database connection not available")
 	}
 
-	// First, get the host basic info
+	// First, get the host basic info.
+	// Empty ownerSubjectID = legacy find by IP among global rows (owner_subject_id='').
+	// Non-empty = strict (owner, ip). When owner is empty and no global row exists,
+	// fall back to find-by-ip for pre-migration / mixed DBs.
 	var host models.Host
-	err := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
-		Where("ip = ?", ip).
+	err := r.db.Select(hostSelectColumns).
+		Where("ip = ? AND owner_subject_id = ?", ip, ownerSubjectID).
 		First(&host).Error
+	if err != nil && ownerSubjectID == "" {
+		err = r.db.Select(hostSelectColumns).Where("ip = ?", ip).First(&host).Error
+	}
 	if err != nil {
 		return nil, fmt.Errorf("host not found: %w", err)
 	}
@@ -470,25 +490,29 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 	return result, nil
 }
 
-// GetAllHostsWithRelations retrieves all hosts with their ports and vulnerabilities
-func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error) {
+// GetAllHostsWithRelations retrieves hosts with their ports and vulnerabilities.
+// When ownerSubjectID is non-empty, only that owner's hosts are returned.
+func (r *HostRepository) GetAllHostsWithRelations(ownerSubjectID string) ([]HostWithRelations, error) {
 	if r.db == nil {
 		return nil, fmt.Errorf("database connection not available")
 	}
 
-	// Get all hosts
+	// Get hosts (optionally scoped by owner)
 	var hosts []models.Host
-	err := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
-		Find(&hosts).Error
+	query := r.db.Select(hostSelectColumns)
+	if ownerSubjectID != "" {
+		query = query.Where("owner_subject_id = ?", ownerSubjectID)
+	}
+	err := query.Find(&hosts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query hosts: %w", err)
 	}
 
 	results := make([]HostWithRelations, 0, len(hosts))
 	for _, host := range hosts {
-		hostWithRelations, err := r.GetHostWithRelations(host.IP)
+		hostWithRelations, err := r.GetHostWithRelations(host.IP, host.OwnerSubjectID)
 		if err != nil {
-			slog.Warn("Failed to get relations for host", "ip", host.IP, "error", err)
+			slog.Warn("Failed to get relations for host", "ip", host.IP, "owner", host.OwnerSubjectID, "error", err)
 			// Still include the host but without relations
 			results = append(results, HostWithRelations{
 				Host:            host,

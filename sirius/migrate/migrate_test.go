@@ -7,8 +7,8 @@ import (
 
 func TestMigrationsAreOrderedAndUnique(t *testing.T) {
 	ms := Migrations()
-	if len(ms) < 7 {
-		t.Fatalf("expected at least 7 migrations, got %d", len(ms))
+	if len(ms) < 8 {
+		t.Fatalf("expected at least 8 migrations, got %d", len(ms))
 	}
 
 	seen := make(map[string]bool)
@@ -34,8 +34,8 @@ func TestMigrationsAreOrderedAndUnique(t *testing.T) {
 	if ms[0].Version != "001_baseline" {
 		t.Fatalf("first migration must be 001_baseline, got %s", ms[0].Version)
 	}
-	if ms[len(ms)-1].Version != "007_add_vulnerability_stats_indexes" {
-		t.Fatalf("last migration must be 007_..., got %s", ms[len(ms)-1].Version)
+	if ms[len(ms)-1].Version != "008_host_owner_subject" {
+		t.Fatalf("last migration must be 008_..., got %s", ms[len(ms)-1].Version)
 	}
 }
 

@@ -10,10 +10,15 @@ import (
 )
 
 func GetHost(ip string) (sirius.Host, error) {
+	return GetHostOwned(ip, "")
+}
+
+// GetHostOwned retrieves a host scoped by owner when ownerSubjectID is non-empty.
+func GetHostOwned(ip, ownerSubjectID string) (sirius.Host, error) {
 	repo := NewHostRepository()
 
 	// Get host with explicit JOIN query
-	hostWithRelations, err := repo.GetHostWithRelations(ip)
+	hostWithRelations, err := repo.GetHostWithRelations(ip, ownerSubjectID)
 	if err != nil {
 		return sirius.Host{}, err
 	}
@@ -23,10 +28,15 @@ func GetHost(ip string) (sirius.Host, error) {
 }
 
 func GetAllHosts() ([]sirius.Host, error) {
+	return GetAllHostsOwned("")
+}
+
+// GetAllHostsOwned lists hosts; when ownerSubjectID is non-empty, only that owner's rows.
+func GetAllHostsOwned(ownerSubjectID string) ([]sirius.Host, error) {
 	repo := NewHostRepository()
 
 	// Get all hosts with explicit JOIN queries
-	hostsWithRelations, err := repo.GetAllHostsWithRelations()
+	hostsWithRelations, err := repo.GetAllHostsWithRelations(ownerSubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +204,8 @@ func AddHost(host sirius.Host) error {
 		Config:  "backward_compatibility",
 	}
 
-	// Use source-aware function which now uses repository pattern
-	return AddHostWithSource(host, legacySource)
+	// Use source-aware function which now uses repository pattern (empty owner = legacy)
+	return AddHostWithSource(host, legacySource, "")
 }
 
 // DeleteHost handles the POST /host/delete route
@@ -477,8 +487,8 @@ type EnhancedHostData struct {
 func GetHostWithEnhancedData(ip string, includeFields []string) (*EnhancedHostData, error) {
 	repo := NewHostRepository()
 
-	// Get host with relations using repository
-	hostWithRelations, err := repo.GetHostWithRelations(ip)
+	// Get host with relations using repository (legacy find-by-ip)
+	hostWithRelations, err := repo.GetHostWithRelations(ip, "")
 	if err != nil {
 		return nil, err
 	}

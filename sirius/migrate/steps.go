@@ -189,3 +189,15 @@ func apply007(db *gorm.DB) error {
 	}
 	return execAll(db, statements)
 }
+
+func apply008(db *gorm.DB) error {
+	// Empty owner_subject_id preserves legacy/admin global inventory behavior.
+	// Unique (owner, ip) among live rows so Alice and Bob can both own 10.0.0.5.
+	// HID remains globally unique (UpsertHost embeds an owner digest when generating).
+	statements := []string{
+		`ALTER TABLE hosts ADD COLUMN IF NOT EXISTS owner_subject_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_hosts_owner_subject_id ON hosts(owner_subject_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_hosts_owner_ip ON hosts(owner_subject_id, ip) WHERE deleted_at IS NULL`,
+	}
+	return execAll(db, statements)
+}

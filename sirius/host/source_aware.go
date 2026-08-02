@@ -10,14 +10,15 @@ import (
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 )
 
-// AddHostWithSource adds or updates a host with source attribution using repository pattern
-func AddHostWithSource(host sirius.Host, source models.ScanSource) error {
-	log.Printf("Adding/updating host %s with source %s (version: %s)", host.IP, source.Name, source.Version)
+// AddHostWithSource adds or updates a host with source attribution using repository pattern.
+// ownerSubjectID scopes the host row; empty keeps legacy/admin global inventory behavior.
+func AddHostWithSource(host sirius.Host, source models.ScanSource, ownerSubjectID string) error {
+	log.Printf("Adding/updating host %s with source %s (version: %s) owner=%q", host.IP, source.Name, source.Version, ownerSubjectID)
 
 	repo := NewHostRepository()
 
 	// 1. Upsert host entity (basic fields only)
-	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID)
+	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID, ownerSubjectID)
 	if err != nil {
 		return fmt.Errorf("failed to upsert host: %w", err)
 	}
@@ -263,15 +264,16 @@ func extractVersion(userAgent, tool string) string {
 	return "detected"
 }
 
-// AddHostWithSourceAndJSONB adds or updates a host with source attribution and JSONB data using repository pattern
-func AddHostWithSourceAndJSONB(host sirius.Host, source models.ScanSource,
+// AddHostWithSourceAndJSONB adds or updates a host with source attribution and JSONB data using repository pattern.
+// ownerSubjectID scopes the host row; empty keeps legacy/admin global inventory behavior.
+func AddHostWithSourceAndJSONB(host sirius.Host, source models.ScanSource, ownerSubjectID string,
 	softwareInventory, systemFingerprint, agentMetadata map[string]interface{}) error {
-	log.Printf("Adding/updating host %s with source %s and enhanced JSONB data", host.IP, source.Name)
+	log.Printf("Adding/updating host %s with source %s owner=%q and enhanced JSONB data", host.IP, source.Name, ownerSubjectID)
 
 	repo := NewHostRepository()
 
 	// 1. Upsert host entity (basic fields only)
-	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID)
+	hostID, err := repo.UpsertHost(host.IP, host.Hostname, host.OS, host.OSVersion, host.HID, ownerSubjectID)
 	if err != nil {
 		return fmt.Errorf("failed to upsert host: %w", err)
 	}

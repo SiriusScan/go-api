@@ -31,6 +31,7 @@ func Migrations() []Migration {
 		{Version: "005_fix_critical_schema_issues", Name: "Critical schema fixes (ports.number, indexes)", Apply: apply005},
 		{Version: "006_add_events_table", Name: "Events table and indexes", Apply: apply006},
 		{Version: "007_add_vulnerability_stats_indexes", Name: "Vulnerability statistics indexes", Apply: apply007},
+		{Version: "008_host_owner_subject", Name: "Host owner_subject_id for same-IP isolation", Apply: apply008},
 	}
 }
 

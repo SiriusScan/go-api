@@ -62,7 +62,7 @@ func TestRepositoryCircularReferences(t *testing.T) {
 
 	// Test 1: Write operations using repository pattern
 	t.Log("\n=== Test 1: Write Operations ===")
-	err := AddHostWithSource(testHost, testSource)
+	err := AddHostWithSource(testHost, testSource, "")
 	if err != nil {
 		t.Fatalf("❌ Failed to add host with source: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestRepositoryCircularReferences(t *testing.T) {
 	// Test 4: Repository direct access (verify no circular references in models)
 	t.Log("\n=== Test 4: Direct Repository Access ===")
 	repo := NewHostRepository()
-	hostWithRelations, err := repo.GetHostWithRelations(testHost.IP)
+	hostWithRelations, err := repo.GetHostWithRelations(testHost.IP, "")
 	if err != nil {
 		t.Fatalf("❌ Failed to get host with relations: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestRepositoryUpsertOperations(t *testing.T) {
 	db.Exec("DELETE FROM vulnerabilities WHERE v_id = 'CVE-TEST-REPO'")
 
 	t.Log("\n=== Test: UpsertHost ===")
-	hostID, err := repo.UpsertHost("10.0.0.99", "test-repo-host", "TestOS", "1.0", "TEST-HID")
+	hostID, err := repo.UpsertHost("10.0.0.99", "test-repo-host", "TestOS", "1.0", "TEST-HID", "")
 	if err != nil {
 		t.Fatalf("❌ UpsertHost failed: %v", err)
 	}
@@ -274,5 +274,99 @@ func TestRepositoryUpsertOperations(t *testing.T) {
 	db.Exec("DELETE FROM vulnerabilities WHERE id = ?", vulnID)
 
 	t.Log("\n✅ All repository operations completed successfully")
+}
+
+// TestUpsertHostOwnerIsolation ensures Alice and Bob get distinct rows for the same IP.
+func TestUpsertHostOwnerIsolation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Postgres on localhost:5432; run without -short to enable")
+	}
+
+	db := postgres.GetDB()
+	if db == nil {
+		t.Fatal("failed to initialize database")
+	}
+
+	const ip = "10.0.0.77"
+	db.Exec("DELETE FROM hosts WHERE ip = ?", ip)
+
+	repo := NewHostRepository()
+
+	aliceID, err := repo.UpsertHost(ip, "alice-host", "Linux", "1.0", "", "subj-alice")
+	if err != nil {
+		t.Fatalf("alice UpsertHost: %v", err)
+	}
+	bobID, err := repo.UpsertHost(ip, "bob-host", "Linux", "1.0", "", "subj-bob")
+	if err != nil {
+		t.Fatalf("bob UpsertHost: %v", err)
+	}
+	if aliceID == bobID {
+		t.Fatalf("expected distinct host IDs for Alice and Bob, both got %d", aliceID)
+	}
+
+	aliceAgain, err := repo.UpsertHost(ip, "alice-host-updated", "Linux", "1.1", "", "subj-alice")
+	if err != nil {
+		t.Fatalf("alice re-UpsertHost: %v", err)
+	}
+	if aliceAgain != aliceID {
+		t.Fatalf("alice re-upsert should update same row: got %d want %d", aliceAgain, aliceID)
+	}
+
+	var alice, bob models.Host
+	if err := db.First(&alice, aliceID).Error; err != nil {
+		t.Fatalf("load alice: %v", err)
+	}
+	if err := db.First(&bob, bobID).Error; err != nil {
+		t.Fatalf("load bob: %v", err)
+	}
+	if alice.OwnerSubjectID != "subj-alice" || bob.OwnerSubjectID != "subj-bob" {
+		t.Fatalf("owners: alice=%q bob=%q", alice.OwnerSubjectID, bob.OwnerSubjectID)
+	}
+	if alice.IP != ip || bob.IP != ip {
+		t.Fatalf("IPs: alice=%q bob=%q want %q", alice.IP, bob.IP, ip)
+	}
+	if alice.HID == "" || bob.HID == "" || alice.HID == bob.HID {
+		t.Fatalf("HIDs must be unique and non-empty: alice=%q bob=%q", alice.HID, bob.HID)
+	}
+	if alice.Hostname != "alice-host-updated" {
+		t.Fatalf("alice hostname not updated: %q", alice.Hostname)
+	}
+	if bob.Hostname != "bob-host" {
+		t.Fatalf("bob hostname changed unexpectedly: %q", bob.Hostname)
+	}
+
+	// Empty-owner path creates a third global row, not Alice or Bob.
+	legacyID, err := repo.UpsertHost(ip, "legacy-host", "Linux", "1.0", "", "")
+	if err != nil {
+		t.Fatalf("legacy UpsertHost: %v", err)
+	}
+	if legacyID == aliceID || legacyID == bobID {
+		t.Fatalf("legacy row must be distinct from owned rows: legacy=%d alice=%d bob=%d", legacyID, aliceID, bobID)
+	}
+	var legacy models.Host
+	if err := db.First(&legacy, legacyID).Error; err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if legacy.OwnerSubjectID != "" || legacy.Hostname != "legacy-host" {
+		t.Fatalf("legacy host unexpected: owner=%q hostname=%q", legacy.OwnerSubjectID, legacy.Hostname)
+	}
+
+	db.Exec("DELETE FROM hosts WHERE ip = ?", ip)
+}
+
+func TestGenerateHostIDIncludesOwnerDigest(t *testing.T) {
+	legacy := generateHostID("")
+	if !strings.HasPrefix(legacy, "scan-") || strings.Count(legacy, "-") != 1 {
+		t.Fatalf("legacy HID format unexpected: %q", legacy)
+	}
+	owned := generateHostID("subj-alice")
+	if !strings.HasPrefix(owned, "scan-") || strings.Count(owned, "-") != 2 {
+		t.Fatalf("owned HID should include owner digest segment: %q", owned)
+	}
+	other := generateHostID("subj-bob")
+	// Digests differ by owner even if random collides (extremely unlikely); prefixes before last segment differ.
+	if owned[:13] == other[:13] && owned == other {
+		t.Fatalf("owned HIDs should differ across owners: %q vs %q", owned, other)
+	}
 }
 
