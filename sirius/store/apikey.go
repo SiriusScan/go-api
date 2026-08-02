@@ -20,16 +20,21 @@ const (
 	apiKeyBootstrapFlag = "apikey:bootstrap_complete"
 	// apiKeyRootRef stores the hashed key reference for the root key.
 	apiKeyRootRef = "apikey:root"
+
+	// ScopeAgentEnroll grants permission to enroll agents.
+	ScopeAgentEnroll = "agent:enroll"
 )
 
 // APIKeyMeta holds metadata about an API key. The raw key is never persisted.
 type APIKeyMeta struct {
-	ID         string `json:"id"`          // SHA-256 hash of the raw key (also used as Valkey key suffix)
-	Label      string `json:"label"`       // Human-readable label
-	Prefix     string `json:"prefix"`      // First 8 characters of the raw key for display
-	CreatedBy  string `json:"created_by"`  // User or system that created the key
-	CreatedAt  string `json:"created_at"`  // RFC-3339 timestamp
-	LastUsedAt string `json:"last_used_at"` // RFC-3339 timestamp, empty if never used
+	ID             string   `json:"id"`                        // SHA-256 hash of the raw key (also used as Valkey key suffix)
+	Label          string   `json:"label"`                     // Human-readable label
+	Prefix         string   `json:"prefix"`                    // First 8 characters of the raw key for display
+	CreatedBy      string   `json:"created_by"`                // User or system that created the key (display)
+	OwnerSubjectID string   `json:"owner_subject_id,omitempty"` // Authz subject that owns the key
+	Scopes         []string `json:"scopes,omitempty"`          // Empty/nil means full access (legacy)
+	CreatedAt      string   `json:"created_at"`                // RFC-3339 timestamp
+	LastUsedAt     string   `json:"last_used_at"`              // RFC-3339 timestamp, empty if never used
 }
 
 // GenerateAPIKey creates a cryptographically random API key with the sk_ prefix.
@@ -53,16 +58,38 @@ func valkeyKey(keyHash string) string {
 	return apiKeyStorePrefix + keyHash
 }
 
+// HasScope reports whether meta grants the given scope.
+// Empty or nil Scopes means full access (legacy keys).
+func HasScope(meta APIKeyMeta, scope string) bool {
+	if !IsScoped(meta) {
+		return true
+	}
+	for _, s := range meta.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// IsScoped reports whether meta has an explicit non-empty scope list.
+func IsScoped(meta APIKeyMeta) bool {
+	return len(meta.Scopes) > 0
+}
+
 // StoreAPIKey persists API key metadata in Valkey. The raw key is hashed and
 // used as the lookup key; the raw key itself is never stored.
-func StoreAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy string) (APIKeyMeta, error) {
+// ownerSubjectID and scopes may be empty for bootstrap/legacy keys.
+func StoreAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy, ownerSubjectID string, scopes []string) (APIKeyMeta, error) {
 	keyHash := hashKey(rawKey)
 	meta := APIKeyMeta{
-		ID:        keyHash,
-		Label:     label,
-		Prefix:    safePrefix(rawKey),
-		CreatedBy: createdBy,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:             keyHash,
+		Label:          label,
+		Prefix:         safePrefix(rawKey),
+		CreatedBy:      createdBy,
+		OwnerSubjectID: ownerSubjectID,
+		Scopes:         scopes,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 
 	data, err := json.Marshal(meta)
@@ -79,6 +106,7 @@ func StoreAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy string
 
 // EnsureAPIKey ensures metadata exists for a raw API key hash. If metadata is
 // already present it is returned unchanged; otherwise it is created.
+// Bootstrap keys are stored with empty owner and scopes (full access).
 func EnsureAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy string) (APIKeyMeta, error) {
 	keyHash := hashKey(rawKey)
 	resp, err := s.GetValue(ctx, valkeyKey(keyHash))
@@ -88,11 +116,12 @@ func EnsureAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy strin
 			return existing, nil
 		}
 	}
-	return StoreAPIKey(ctx, s, rawKey, label, createdBy)
+	return StoreAPIKey(ctx, s, rawKey, label, createdBy, "", nil)
 }
 
 // ValidateAPIKey checks whether the given raw key exists in Valkey. If valid it
 // returns the associated metadata and updates the LastUsedAt timestamp.
+// OwnerSubjectID and Scopes are preserved unchanged on the last-used write.
 func ValidateAPIKey(ctx context.Context, s KVStore, rawKey string) (APIKeyMeta, error) {
 	keyHash := hashKey(rawKey)
 	resp, err := s.GetValue(ctx, valkeyKey(keyHash))
@@ -105,12 +134,26 @@ func ValidateAPIKey(ctx context.Context, s KVStore, rawKey string) (APIKeyMeta, 
 		return APIKeyMeta{}, fmt.Errorf("failed to unmarshal API key metadata: %w", err)
 	}
 
-	// Update last-used timestamp (best-effort, don't fail the request).
+	// Update last-used timestamp only; remarshal of existing meta preserves
+	// OwnerSubjectID, Scopes, and all other fields (best-effort write).
 	meta.LastUsedAt = time.Now().UTC().Format(time.RFC3339)
 	if data, err := json.Marshal(meta); err == nil {
 		_ = s.SetValue(ctx, valkeyKey(keyHash), string(data))
 	}
 
+	return meta, nil
+}
+
+// GetAPIKeyMeta returns metadata for a key by its hash ID (for revoke ownership checks).
+func GetAPIKeyMeta(ctx context.Context, s KVStore, keyID string) (APIKeyMeta, error) {
+	resp, err := s.GetValue(ctx, valkeyKey(keyID))
+	if err != nil {
+		return APIKeyMeta{}, fmt.Errorf("API key not found: %w", err)
+	}
+	var meta APIKeyMeta
+	if err := json.Unmarshal([]byte(resp.Message.Value), &meta); err != nil {
+		return APIKeyMeta{}, fmt.Errorf("failed to unmarshal API key metadata: %w", err)
+	}
 	return meta, nil
 }
 
@@ -136,6 +179,21 @@ func ListAPIKeys(ctx context.Context, s KVStore) ([]APIKeyMeta, error) {
 			continue
 		}
 		result = append(result, meta)
+	}
+	return result, nil
+}
+
+// ListAPIKeysByOwner returns metadata for API keys owned by ownerSubjectID.
+func ListAPIKeysByOwner(ctx context.Context, s KVStore, ownerSubjectID string) ([]APIKeyMeta, error) {
+	all, err := ListAPIKeys(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	var result []APIKeyMeta
+	for _, meta := range all {
+		if meta.OwnerSubjectID == ownerSubjectID {
+			result = append(result, meta)
+		}
 	}
 	return result, nil
 }
