@@ -108,7 +108,7 @@ func (p *Port) String() string {
 type HostPort struct {
 	HostID        uint      `json:"host_id" gorm:"primaryKey"`
 	PortID        uint      `json:"port_id" gorm:"primaryKey"`
-	Source        string    `json:"source"`                       // "nmap", "agent", "manual", "rustscan"
+	Source        string    `json:"source" gorm:"primaryKey"`     // "nmap", "agent", "manual", "rustscan"
 	SourceVersion string    `json:"source_version"`               // Scanner version/build
 	FirstSeen     time.Time `json:"first_seen"`                   // When first detected
 	LastSeen      time.Time `json:"last_seen"`                    // When last confirmed
