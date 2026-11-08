@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -37,7 +38,8 @@ func agentTokenKey(agentID string) string {
 	return agentTokenPrefix + agentID
 }
 
-// StoreAgentToken persists an agent token in Valkey keyed by agent ID.
+// StoreAgentToken explicitly replaces an agent token keyed by agent ID.
+// Enrollment must use StoreAgentTokenIfAbsent to avoid replacing existing tokens.
 func StoreAgentToken(ctx context.Context, s KVStore, agentID, token string) error {
 	meta := AgentTokenMeta{
 		AgentID:   agentID,
@@ -71,10 +73,13 @@ func ValidateAgentToken(ctx context.Context, s KVStore, agentID, token string) (
 		return AgentTokenMeta{}, fmt.Errorf("token mismatch for agent %s", agentID)
 	}
 
-	// Update last-seen (best-effort).
+	// Update last-seen only if the exact validated record still exists. An
+	// unconditional write could restore a revoked or concurrently replaced token.
 	meta.LastSeen = time.Now().UTC().Format(time.RFC3339)
-	if data, err := json.Marshal(meta); err == nil {
-		_ = s.SetValue(ctx, agentTokenKey(agentID), string(data))
+	if cas, ok := s.(ValueCompareAndSetter); ok {
+		if data, err := json.Marshal(meta); err == nil {
+			_, _ = cas.CompareAndSetValue(ctx, agentTokenKey(agentID), resp.Message.Value, string(data))
+		}
 	}
 
 	return meta, nil
@@ -94,8 +99,22 @@ func GetAgentToken(ctx context.Context, s KVStore, agentID string) (AgentTokenMe
 	return meta, nil
 }
 
-// HasAgentToken returns true if a token already exists for the given agent ID.
-func HasAgentToken(ctx context.Context, s KVStore, agentID string) bool {
+// AgentTokenExists distinguishes confirmed absence from a failed store read.
+// Any stored value, including malformed metadata, reserves the agent ID.
+func AgentTokenExists(ctx context.Context, s KVStore, agentID string) (bool, error) {
 	_, err := s.GetValue(ctx, agentTokenKey(agentID))
-	return err == nil
+	if errors.Is(err, ErrKeyNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check agent token: %w", err)
+	}
+	return true, nil
+}
+
+// HasAgentToken conservatively treats failed reads as an existing token.
+// Deprecated: use AgentTokenExists to handle unavailable storage explicitly.
+func HasAgentToken(ctx context.Context, s KVStore, agentID string) bool {
+	exists, err := AgentTokenExists(ctx, s, agentID)
+	return exists || err != nil
 }
