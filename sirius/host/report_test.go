@@ -137,7 +137,9 @@ func TestReportRollbackAndRetry(t *testing.T) {
 					t.Fatalf("rejected report changed state:\nbefore=%v\nafter=%v", before, after)
 				}
 				var table string
-				fmt.Sscanf(failure, "ALTER TABLE %s", &table)
+				if _, err := fmt.Sscanf(failure, "ALTER TABLE %s", &table); err != nil {
+					t.Fatalf("parse injected failure table: %v", err)
+				}
 				if err := repo.db.Exec("ALTER TABLE " + table + " DROP CONSTRAINT injected_failure").Error; err != nil {
 					t.Fatal(err)
 				}

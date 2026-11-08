@@ -33,7 +33,11 @@ func TestCompareAndSetValueIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "sirius:test:cas:" + hex.EncodeToString(suffix[:])
-	defer kv.DeleteValue(context.Background(), key)
+	defer func() {
+		if err := kv.DeleteValue(context.Background(), key); err != nil {
+			t.Errorf("clean up isolated CAS key: %v", err)
+		}
+	}()
 	if ok, err := kv.CompareAndSetValue(ctx, key, "", "new"); err != nil || ok {
 		t.Fatalf("missing key matched: %t / %v", ok, err)
 	}
