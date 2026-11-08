@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -17,10 +18,12 @@ import (
 
 // generateHostID creates a unique host identifier for scan-discovered hosts
 // Format: scan-<random-hex> to distinguish from agent-generated HIDs
-func generateHostID() string {
+func generateHostID(random io.Reader) (string, error) {
 	bytes := make([]byte, 8)
-	rand.Read(bytes)
-	return "scan-" + hex.EncodeToString(bytes)
+	if _, err := io.ReadFull(random, bytes); err != nil {
+		return "", fmt.Errorf("generate host identity: %w", err)
+	}
+	return "scan-" + hex.EncodeToString(bytes), nil
 }
 
 // HostRepository provides explicit database operations for hosts without circular references
@@ -111,7 +114,10 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 	// Generate a unique HID if not provided to satisfy uniqueIndex constraint
 	hostHID := hid
 	if hostHID == "" {
-		hostHID = generateHostID()
+		hostHID, err = generateHostID(rand.Reader)
+		if err != nil {
+			return 0, err
+		}
 		slog.Debug("Generated HID for scan-discovered host", "hid", hostHID, "ip", ip)
 	}
 

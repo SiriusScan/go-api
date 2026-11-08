@@ -150,7 +150,9 @@ func TestSnapshotManagerListSnapshots(t *testing.T) {
 		}
 		key := "vuln:snapshot:" + date
 		data, _ := json.Marshal(snapshot)
-		mockStore.SetValue(ctx, key, string(data))
+		if err := mockStore.SetValue(ctx, key, string(data)); err != nil {
+			t.Fatalf("store snapshot fixture: %v", err)
+		}
 	}
 
 	// List snapshots
@@ -189,7 +191,9 @@ func TestSnapshotManagerCleanup(t *testing.T) {
 		}
 		key := "vuln:snapshot:" + date
 		data, _ := json.Marshal(snapshot)
-		mockStore.SetValue(ctx, key, string(data))
+		if err := mockStore.SetValue(ctx, key, string(data)); err != nil {
+			t.Fatalf("store snapshot fixture: %v", err)
+		}
 	}
 
 	// Run cleanup
@@ -209,4 +213,3 @@ func TestSnapshotManagerCleanup(t *testing.T) {
 
 	t.Log("\n✅ SnapshotManager cleanup test passed")
 }
-
