@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"os"
+	"strings"
 	"time"
 
 	valkey "github.com/valkey-io/valkey-go"
@@ -13,6 +17,9 @@ const (
 	SIRIUS_VALKEY = "sirius-valkey:6379"
 )
 
+// ErrKeyNotFound identifies a missing key, rather than a failed store read.
+var ErrKeyNotFound = errors.New("key not found")
+
 // KVStore defines the key/value operations our store supports.
 type KVStore interface {
 	// SetValue sets the given key to the specified value.
@@ -20,6 +27,7 @@ type KVStore interface {
 	// SetValueWithTTL sets the given key to the specified value with a TTL in seconds.
 	SetValueWithTTL(ctx context.Context, key, value string, ttlSeconds int) error
 	// GetValue retrieves the value associated with the given key.
+	// Missing keys must return an error wrapping ErrKeyNotFound.
 	GetValue(ctx context.Context, key string) (ValkeyResponse, error)
 	// GetTTL retrieves the remaining TTL in seconds for the given key.
 	GetTTL(ctx context.Context, key string) (int, error)
@@ -38,16 +46,31 @@ type valkeyStore struct {
 	client valkey.Client
 }
 
-// NewValkeyStore creates a new store connected to sirius-valkey:6379.
+func valkeyAddress() string {
+	if address := strings.TrimSpace(os.Getenv("VALKEY_ADDR")); address != "" {
+		return address
+	}
+	host := strings.TrimSpace(os.Getenv("VALKEY_HOST"))
+	if host == "" {
+		host = "sirius-valkey"
+	}
+	port := strings.TrimSpace(os.Getenv("VALKEY_PORT"))
+	if port == "" {
+		port = "6379"
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// NewValkeyStore uses the configured address, defaulting to sirius-valkey:6379.
 func NewValkeyStore() (KVStore, error) {
-	client, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{SIRIUS_VALKEY}})
+	client, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{valkeyAddress()}})
 	if err != nil {
 		return nil, err
 	}
 	return &valkeyStore{client: client}, nil
 }
 
-// SetValue implements KVStore by executing a SET command with NX semantics.
+// SetValue implements KVStore by executing an unconditional SET command.
 func (s *valkeyStore) SetValue(ctx context.Context, key, value string) error {
 	cmd := s.client.B().Set().Key(key).Value(value).Build()
 	return s.client.Do(ctx, cmd).Error()
@@ -90,7 +113,7 @@ func (s *valkeyStore) GetValue(ctx context.Context, key string) (ValkeyResponse,
 
 	if err := resp.Error(); err != nil {
 		if valkey.IsValkeyNil(err) {
-			return val, fmt.Errorf("key '%s' not found", key)
+			return val, fmt.Errorf("key %q: %w", key, ErrKeyNotFound)
 		}
 		return val, fmt.Errorf("valkey GET for key '%s' failed: %w", key, err)
 	}
