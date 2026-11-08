@@ -30,7 +30,7 @@ func failOnError(err error, msg string) {
 func Listen(qName string, messageProcessor MessageProcessor) {
 	slog.Info("Listening to queue", "queue", qName)
 
-	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
+	conn, err := amqp.Dial(rabbitMQAddress())
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
@@ -117,7 +117,7 @@ func ListenWithRetry(ctx context.Context, qName string, messageProcessor Message
 // messages until the connection drops or ctx is cancelled. Returns an error on
 // connection/channel failures; returns nil if the message channel closes cleanly.
 func listenOnce(ctx context.Context, qName string, messageProcessor MessageProcessor) error {
-	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
+	conn, err := amqp.Dial(rabbitMQAddress())
 	if err != nil {
 		return fmt.Errorf("connect to RabbitMQ: %w", err)
 	}
@@ -179,7 +179,7 @@ func listenOnce(ctx context.Context, qName string, messageProcessor MessageProce
 
 // Send sends a message to a RabbitMQ queue specified by qName.
 func Send(qName string, message string) error {
-	conn, err := amqp.Dial(SIRIUS_RABBITMQ)
+	conn, err := amqp.Dial(rabbitMQAddress())
 	if err != nil {
 		return err
 	}
