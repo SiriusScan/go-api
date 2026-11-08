@@ -82,9 +82,11 @@ func (h *Host) String() string {
 
 type Port struct {
 	gorm.Model
-	Number   int    `gorm:"not null"` // Port number (22, 80, 443, etc.)
-	Protocol string `gorm:"not null"`
-	State    string
+	Number   int    `gorm:"not null;uniqueIndex:idx_ports_identity_unique"` // Port number (22, 80, 443, etc.)
+	Protocol string `gorm:"not null;uniqueIndex:idx_ports_identity_unique"`
+	// State is a legacy catalog field, retained for response compatibility.
+	// Persist observations on HostPort.State, never on this shared identity.
+	State string
 	// REMOVED: Hosts []Host `gorm:"many2many:host_ports"` - circular reference eliminated
 	HostPorts []HostPort `gorm:"foreignKey:PortID"`
 }
@@ -104,16 +106,19 @@ func (p *Port) String() string {
 		p.ID, p.Number, p.Protocol, p.State)
 }
 
-// Enhanced HostPort junction table with source attribution
+// Enhanced HostPort junction table with source attribution. Migration 008 owns
+// the state column so baseline AutoMigrate cannot prefill legacy rows before
+// their state is backfilled from the old catalog.
 type HostPort struct {
 	HostID        uint      `json:"host_id" gorm:"primaryKey"`
 	PortID        uint      `json:"port_id" gorm:"primaryKey"`
-	Source        string    `json:"source"`                       // "nmap", "agent", "manual", "rustscan"
-	SourceVersion string    `json:"source_version"`               // Scanner version/build
-	FirstSeen     time.Time `json:"first_seen"`                   // When first detected
-	LastSeen      time.Time `json:"last_seen"`                    // When last confirmed
-	Status        string    `json:"status" gorm:"default:active"` // "active", "resolved", "false_positive"
-	Notes         string    `json:"notes,omitempty"`              // Additional context
+	State         string    `json:"state" gorm:"-:migration"`                          // Per-host, per-source observation
+	Source        string    `json:"source" gorm:"primaryKey;not null;default:unknown"` // "nmap", "agent", "manual", "rustscan"
+	SourceVersion string    `json:"source_version"`                                    // Scanner version/build
+	FirstSeen     time.Time `json:"first_seen"`                                        // When first detected
+	LastSeen      time.Time `json:"last_seen"`                                         // When last confirmed
+	Status        string    `json:"status" gorm:"default:active"`                      // "active", "resolved", "false_positive"
+	Notes         string    `json:"notes,omitempty"`                                   // Additional context
 }
 
 type Service struct {
@@ -124,17 +129,18 @@ type Service struct {
 
 // Enhanced HostVulnerability junction table with source attribution
 type HostVulnerability struct {
-	HostID          uint      `json:"host_id" gorm:"primaryKey"`
-	VulnerabilityID uint      `json:"vulnerability_id" gorm:"primaryKey"` // Foreign Key to Vulnerability from models/vulnerability
-	Source          string    `json:"source" gorm:"primaryKey"`           // "nmap", "agent", "manual", "rustscan"
-	SourceVersion   string    `json:"source_version"`                     // Scanner version/build
-	FirstSeen       time.Time `json:"first_seen"`                         // When first detected
-	LastSeen        time.Time `json:"last_seen"`                          // When last confirmed
-	Status          string    `json:"status" gorm:"default:active"`       // "active", "resolved", "false_positive"
-	Confidence      float64   `json:"confidence" gorm:"default:1.0"`      // 0.0-1.0 confidence score
-	Port            *int      `json:"port,omitempty"`                     // Specific port if applicable
-	ServiceInfo     string    `json:"service_info,omitempty"`             // Service details
-	Notes           string    `json:"notes,omitempty"`                    // Additional context
+	HostID          uint        `json:"host_id" gorm:"primaryKey"`
+	VulnerabilityID uint        `json:"vulnerability_id" gorm:"primaryKey"`              // Foreign Key to Vulnerability from models/vulnerability
+	Source          string      `json:"source" gorm:"primaryKey"`                        // "nmap", "agent", "manual", "rustscan"
+	SourceVersion   string      `json:"source_version"`                                  // Scanner version/build
+	FirstSeen       time.Time   `json:"first_seen"`                                      // When first detected
+	LastSeen        time.Time   `json:"last_seen"`                                       // When last confirmed
+	Status          string      `json:"status" gorm:"default:active"`                    // "active", "resolved", "false_positive"
+	Finding         FindingJSON `json:"finding,omitempty" gorm:"type:jsonb;-:migration"` // Full observation; nullable for legacy rows
+	Confidence      float64     `json:"confidence" gorm:"default:1.0"`                   // 0.0-1.0 confidence score
+	Port            *int        `json:"port,omitempty"`                                  // Specific port if applicable
+	ServiceInfo     string      `json:"service_info,omitempty"`                          // Service details
+	Notes           string      `json:"notes,omitempty"`                                 // Additional context
 }
 
 type Agent struct {

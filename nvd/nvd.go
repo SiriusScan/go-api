@@ -1,10 +1,13 @@
 package nvd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"time"
 )
 
 // =============== Types ===============
@@ -207,11 +210,32 @@ type VendorComment struct {
 	LastModified string `json:"lastModified"`
 }
 
+// DefaultRequestTimeout bounds a lookup, including response headers and body.
+const DefaultRequestTimeout = 10 * time.Second
+
+var defaultClient = &http.Client{Timeout: DefaultRequestTimeout}
+
+// GetCVE preserves the legacy API with a bounded background lookup.
 func GetCVE(vid string) (CveItem, error) {
+	return GetCVEContext(context.Background(), vid)
+}
+
+// GetCVEContext fetches NVD metadata within the caller's deadline and the
+// per-request limit. Cancellation interrupts header and response-body reads.
+func GetCVEContext(ctx context.Context, vid string) (CveItem, error) {
+	return getCVE(ctx, vid, defaultClient)
+}
+
+func getCVE(ctx context.Context, vid string, client *http.Client) (CveItem, error) {
+	ctx, cancel := context.WithTimeout(ctx, DefaultRequestTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return CveItem{}, err
+	}
 	var baseCve CveItem
 	// api request to NVD: https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2019-1010218
-	url := fmt.Sprintf("https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=%s", vid)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	endpoint := "https://services.nvd.nist.gov/rest/json/cves/2.0?" + url.Values{"cveId": {vid}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return baseCve, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -219,7 +243,6 @@ func GetCVE(vid string) (CveItem, error) {
 	req.Header.Set("Accept", "application/json")
 
 	// Execute the request
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return baseCve, fmt.Errorf("request error: %w", err)
