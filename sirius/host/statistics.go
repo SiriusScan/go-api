@@ -48,31 +48,9 @@ func GetMostVulnerableHosts(limit int) ([]HostVulnerabilityStats, error) {
 		return nil, fmt.Errorf("database connection not available")
 	}
 
-	// SQL query using optimized indexes
-	// This query joins hosts, host_vulnerabilities, and vulnerabilities to calculate:
-	// 1. Total count of distinct vulnerabilities per host
-	// 2. Sum of risk scores (weighted risk score)
-	// 3. Orders by weighted risk score descending, then by vulnerability count
-	// Note: Using COALESCE(h.h_id, h.ip) for host_id since h_id might be NULL
-	query := `
-		SELECT 
-			COALESCE(h.h_id, h.ip) as host_id,
-			h.ip as host_ip,
-			h.hostname,
-			COUNT(DISTINCT hv.vulnerability_id) as total_vulnerabilities,
-			COALESCE(SUM(v.risk_score), 0) as weighted_risk_score,
-			h.updated_at as last_updated
-		FROM hosts h
-		INNER JOIN host_vulnerabilities hv ON hv.host_id = h.id
-		INNER JOIN vulnerabilities v ON v.id = hv.vulnerability_id
-		GROUP BY h.id, h.h_id, h.ip, h.hostname, h.updated_at
-		HAVING COUNT(DISTINCT hv.vulnerability_id) > 0
-		ORDER BY weighted_risk_score DESC, total_vulnerabilities DESC
-		LIMIT ?
-	`
-
 	var results []HostVulnerabilityStats
-	err := db.Raw(query, limit).Scan(&results).Error
+	err := mostVulnerableHostsQuery(db, limit).Scan(&results).Error
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to query most vulnerable hosts: %w", err)
 	}

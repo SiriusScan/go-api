@@ -64,15 +64,7 @@ func GetHostRiskStatistics(ip string) (HostRiskStats, error) {
 	db := postgres.GetDB()
 
 	var stats HostRiskStats
-	// We join the hosts, host_vulnerabilities, and vulnerabilities tables in order to:
-	//   - Filter on the host with the given IP
-	//   - Aggregate the risk scores for vulnerabilities associated with that host.
-	err := db.Table("hosts").
-		Select("count(vulnerabilities.id) as vulnerability_count, sum(vulnerabilities.risk_score) as total_risk_score, avg(vulnerabilities.risk_score) as average_risk_score").
-		Joins("JOIN host_vulnerabilities ON host_vulnerabilities.host_id = hosts.id").
-		Joins("JOIN vulnerabilities ON vulnerabilities.id = host_vulnerabilities.vulnerability_id").
-		Where("hosts.ip = ?", ip).
-		Scan(&stats).Error
+	err := hostRiskStatisticsQuery(db, ip).Scan(&stats).Error
 
 	if err != nil {
 		return stats, err
@@ -100,22 +92,7 @@ func GetHostVulnerabilitySeverityCounts(ip string) (HostVulnerabilitySeverityCou
 	db := postgres.GetDB()
 
 	var severityCounts HostVulnerabilitySeverityCounts
-	// Build the query:
-	// 1. Start from the hosts table.
-	// 2. Join with the host_vulnerabilities table, and then vulnerabilities.
-	// 3. Filter by the provided IP.
-	// 4. Use SUM with CASE expressions to count how many vulnerabilities fall into each severity bucket.
-	err := db.Table("hosts").
-		Select(
-			`SUM(CASE WHEN vulnerabilities.risk_score >= 9 THEN 1 ELSE 0 END) as critical, 
-             SUM(CASE WHEN vulnerabilities.risk_score >= 7 AND vulnerabilities.risk_score < 9 THEN 1 ELSE 0 END) as high, 
-             SUM(CASE WHEN vulnerabilities.risk_score >= 4 AND vulnerabilities.risk_score < 7 THEN 1 ELSE 0 END) as medium, 
-             SUM(CASE WHEN vulnerabilities.risk_score > 0 AND vulnerabilities.risk_score < 4 THEN 1 ELSE 0 END) as low, 
-             SUM(CASE WHEN vulnerabilities.risk_score = 0 THEN 1 ELSE 0 END) as informational`).
-		Joins("JOIN host_vulnerabilities ON host_vulnerabilities.host_id = hosts.id").
-		Joins("JOIN vulnerabilities ON vulnerabilities.id = host_vulnerabilities.vulnerability_id").
-		Where("hosts.ip = ?", ip).
-		Scan(&severityCounts).Error
+	err := hostSeverityCountsQuery(db, ip).Scan(&severityCounts).Error
 
 	if err != nil {
 		return severityCounts, err
@@ -137,49 +114,11 @@ type VulnerabilitySummary struct {
 func GetAllVulnerabilities() ([]VulnerabilitySummary, error) {
 	db := postgres.GetDB()
 
-	var vulnerabilityCounts []VulnerabilitySummary
-	err := db.Model(&models.Vulnerability{}).
-		Select("vulnerabilities.v_id, vulnerabilities.title, vulnerabilities.description, vulnerabilities.risk_score, count(host_vulnerabilities.host_id) as host_count").
-		Joins("left join host_vulnerabilities on host_vulnerabilities.vulnerability_id = vulnerabilities.id").
-		Group("vulnerabilities.id").
-		Scan(&vulnerabilityCounts).Error
-
-	if err != nil {
+	rows := make([]VulnerabilitySummary, 0)
+	if err := vulnerabilitySummariesQuery(db).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	// log.Println(vulnerabilityCounts)
-
-	// Check for
-	// err = db.Model(&models.Vulnerability{}).
-
-	// *** Temporary Patch for NVD Remote Vulnerability Storage ***
-	// For each vulnerability listed on a host there may be no corresponding database entry. If the DB entry is missing, retrieve the vulnerability from the NVD API and add it to the database
-
-	// Shouldn't have to reformat the output, but the sql query is weird
-	// For each vulnerabilityCounts check HostCount
-	// If HostCount is 1 add vulnerabilityCount to new slice (vulnerabilityList) or increment HostCount by 1
-	var vulnerabilityList []VulnerabilitySummary
-	for _, vulnerabilityCount := range vulnerabilityCounts {
-		if vulnerabilityCount.HostCount == 1 {
-			// Check vulnerabilityList for existing vulnerabilityCount
-			// If found, increment HostCount by 1
-			// If not found, add vulnerabilityCount to vulnerabilityList
-			var found bool
-			for i, vulnerability := range vulnerabilityList {
-				if vulnerability.VID == vulnerabilityCount.VID {
-					vulnerabilityList[i].HostCount++
-					found = true
-					break
-				}
-			}
-			if !found {
-				vulnerabilityList = append(vulnerabilityList, vulnerabilityCount)
-			}
-		}
-	}
-	// log.Println("Vulnerability List:", vulnerabilityList)
-
-	return vulnerabilityList, nil
+	return rows, nil
 }
 
 // AddHost Chain: SDK Consumer (e.g. Sirius REST API) -> SDK go-api sirius/host (Here)
@@ -297,12 +236,7 @@ func convertHostWithRelationsToSiriusHost(hwr *HostWithRelations) sirius.Host {
 	// Convert vulnerabilities
 	var siriusVulnerabilities []sirius.Vulnerability
 	for _, vr := range hwr.Vulnerabilities {
-		siriusVulnerabilities = append(siriusVulnerabilities, sirius.Vulnerability{
-			VID:         vr.Vulnerability.VID,
-			Title:       vr.Vulnerability.Title,
-			Description: vr.Vulnerability.Description,
-			RiskScore:   vr.Vulnerability.RiskScore,
-		})
+		siriusVulnerabilities = append(siriusVulnerabilities, vulnerabilityFromRelation(vr))
 	}
 
 	// Convert services (if any exist in the host model)
@@ -334,7 +268,7 @@ func convertHostWithRelationsToSiriusHost(hwr *HostWithRelations) sirius.Host {
 // REMOVED: MapSiriusHostToDBHost
 // This function has been replaced by the repository pattern:
 // - Use HostRepository.UpsertHost() for host entity
-// - Use HostRepository.UpsertPort() and LinkHostPort() for ports
+// - Use HostRepository.UpsertHostPort() for host-specific port observations
 // - Use HostRepository.UpsertVulnerability() and LinkHostVulnerability() for vulnerabilities
 // The old function tried to access models.Host.Ports and models.Host.Vulnerabilities which no longer exist
 

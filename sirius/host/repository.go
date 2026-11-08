@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres"
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 	"gorm.io/gorm"
@@ -53,6 +55,7 @@ type PortRelation struct {
 
 // VulnerabilityRelation represents a vulnerability with source attribution
 type VulnerabilityRelation struct {
+	Finding       *sirius.Vulnerability
 	Vulnerability models.Vulnerability
 	Source        string
 	SourceVersion string
@@ -153,33 +156,6 @@ func (r *HostRepository) UpdateHostJSONB(hostID uint, softwareInventory, systemF
 	return r.db.Model(&models.Host{}).Where("id = ?", hostID).Updates(updates).Error
 }
 
-// UpsertPort creates or finds a port by number and protocol, returns its ID
-func (r *HostRepository) UpsertPort(number int, protocol, state string) (portID uint, err error) {
-	if r.db == nil {
-		return 0, fmt.Errorf("database connection not available")
-	}
-
-	// Set defaults
-	if protocol == "" {
-		protocol = "tcp"
-	}
-	if state == "" {
-		state = "open"
-	}
-
-	var port models.Port
-	result := r.db.Where("number = ? AND protocol = ?", number, protocol).
-		Attrs(models.Port{State: state}).
-		Assign(models.Port{State: state}).
-		FirstOrCreate(&port, models.Port{Number: number, Protocol: protocol})
-
-	if result.Error != nil {
-		return 0, fmt.Errorf("failed to upsert port %d/%s: %w", number, protocol, result.Error)
-	}
-
-	return port.ID, nil
-}
-
 // UpsertVulnerability creates or finds a vulnerability by VID, returns its ID
 func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score float64) (vulnID uint, err error) {
 	if r.db == nil {
@@ -215,6 +191,10 @@ func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score floa
 		return vuln.ID, nil
 	}
 
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return 0, fmt.Errorf("failed to find vulnerability: %w", result.Error)
+	}
+
 	// Vulnerability doesn't exist - create it
 	newVuln := models.Vulnerability{
 		VID:         vid,
@@ -229,105 +209,6 @@ func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score floa
 	}
 
 	return newVuln.ID, nil
-}
-
-// LinkHostPort creates or updates a host-port relationship with source attribution
-func (r *HostRepository) LinkHostPort(hostID, portID uint, source models.ScanSource) error {
-	if r.db == nil {
-		return fmt.Errorf("database connection not available")
-	}
-
-	now := time.Now()
-
-	// Check if this host-port-source combination already exists
-	var hostPort models.HostPort
-	err := r.db.Where("host_id = ? AND port_id = ? AND source = ?", hostID, portID, source.Name).
-		First(&hostPort).Error
-
-	if err == nil {
-		// Update existing relationship
-		err = r.db.Model(&models.HostPort{}).
-			Where("host_id = ? AND port_id = ? AND source = ?", hostID, portID, source.Name).
-			Updates(map[string]interface{}{
-				"last_seen":      now,
-				"source_version": source.Version,
-				"status":         "active",
-				"notes":          source.Config,
-			}).Error
-		if err != nil {
-			return fmt.Errorf("failed to update host-port relationship: %w", err)
-		}
-		return nil
-	}
-
-	// Create new relationship
-	hostPort = models.HostPort{
-		HostID:        hostID,
-		PortID:        portID,
-		Source:        source.Name,
-		SourceVersion: source.Version,
-		FirstSeen:     now,
-		LastSeen:      now,
-		Status:        "active",
-		Notes:         source.Config,
-	}
-
-	err = r.db.Create(&hostPort).Error
-	if err != nil {
-		return fmt.Errorf("failed to create host-port relationship: %w", err)
-	}
-
-	return nil
-}
-
-// LinkHostVulnerability creates or updates a host-vulnerability relationship with source attribution
-func (r *HostRepository) LinkHostVulnerability(hostID, vulnID uint, source models.ScanSource) error {
-	if r.db == nil {
-		return fmt.Errorf("database connection not available")
-	}
-
-	now := time.Now()
-
-	// Check if this host-vulnerability-source combination already exists
-	var hostVuln models.HostVulnerability
-	err := r.db.Where("host_id = ? AND vulnerability_id = ? AND source = ?", hostID, vulnID, source.Name).
-		First(&hostVuln).Error
-
-	if err == nil {
-		// Update existing relationship
-		err = r.db.Model(&models.HostVulnerability{}).
-			Where("host_id = ? AND vulnerability_id = ? AND source = ?", hostID, vulnID, source.Name).
-			Updates(map[string]interface{}{
-				"last_seen":      now,
-				"source_version": source.Version,
-				"status":         "active",
-				"notes":          source.Config,
-			}).Error
-		if err != nil {
-			return fmt.Errorf("failed to update host-vulnerability relationship: %w", err)
-		}
-		return nil
-	}
-
-	// Create new relationship
-	hostVuln = models.HostVulnerability{
-		HostID:          hostID,
-		VulnerabilityID: vulnID,
-		Source:          source.Name,
-		SourceVersion:   source.Version,
-		FirstSeen:       now,
-		LastSeen:        now,
-		Status:          "active",
-		Confidence:      1.0,
-		Notes:           source.Config,
-	}
-
-	err = r.db.Create(&hostVuln).Error
-	if err != nil {
-		return fmt.Errorf("failed to create host-vulnerability relationship: %w", err)
-	}
-
-	return nil
 }
 
 // GetHostWithRelations retrieves a host with ports and vulnerabilities using explicit JOINs
@@ -354,12 +235,12 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 	// Get ports with source attribution
 	portQuery := `
 		SELECT 
-			p.id, p.number, p.protocol, p.state, p.created_at, p.updated_at, p.deleted_at,
+			p.id, p.number, p.protocol, COALESCE(NULLIF(hp.state, ''), 'unknown'), p.created_at, p.updated_at, p.deleted_at,
 			hp.source, hp.source_version, hp.first_seen, hp.last_seen, hp.status, hp.notes
 		FROM host_ports hp
 		JOIN ports p ON hp.port_id = p.id
-		WHERE hp.host_id = ? AND hp.status = 'active'
-		ORDER BY p.number, p.protocol
+		WHERE hp.host_id = ? AND hp.status = 'active' AND p.deleted_at IS NULL
+		ORDER BY p.number, p.protocol, hp.source
 	`
 
 	portRows, err := r.db.Raw(portQuery, host.ID).Rows()
@@ -406,65 +287,9 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 		result.Ports = append(result.Ports, *pr)
 	}
 
-	// Get vulnerabilities with source attribution
-	vulnQuery := `
-		SELECT 
-			v.id, v.v_id, v.title, v.description, v.risk_score, v.created_at, v.updated_at, v.deleted_at,
-			hv.source, hv.source_version, hv.first_seen, hv.last_seen, hv.status, hv.confidence,
-			hv.port, hv.service_info, hv.notes
-		FROM host_vulnerabilities hv
-		JOIN vulnerabilities v ON hv.vulnerability_id = v.id
-		WHERE hv.host_id = ? AND hv.status = 'active'
-		ORDER BY v.risk_score DESC, v.v_id
-	`
-
-	vulnRows, err := r.db.Raw(vulnQuery, host.ID).Rows()
+	result.Vulnerabilities, err = r.getVulnerabilityRelations(host.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query vulnerabilities: %w", err)
-	}
-	defer vulnRows.Close()
-
-	vulnMap := make(map[uint]*VulnerabilityRelation)
-	for vulnRows.Next() {
-		var vuln models.Vulnerability
-		var vr VulnerabilityRelation
-		var firstSeen, lastSeen sql.NullTime
-		var port sql.NullInt64
-
-		err := vulnRows.Scan(
-			&vuln.ID, &vuln.VID, &vuln.Title, &vuln.Description, &vuln.RiskScore,
-			&vuln.CreatedAt, &vuln.UpdatedAt, &vuln.DeletedAt,
-			&vr.Source, &vr.SourceVersion, &firstSeen, &lastSeen,
-			&vr.Status, &vr.Confidence, &port, &vr.ServiceInfo, &vr.Notes,
-		)
-		if err != nil {
-			slog.Warn("Error scanning vulnerability row", "error", err)
-			continue
-		}
-
-		if firstSeen.Valid {
-			vr.FirstSeen = firstSeen.Time
-		}
-		if lastSeen.Valid {
-			vr.LastSeen = lastSeen.Time
-		}
-		if port.Valid {
-			portInt := int(port.Int64)
-			vr.Port = &portInt
-		}
-
-		vr.Vulnerability = vuln
-
-		// Deduplicate vulnerabilities (same vuln can have multiple sources)
-		// Keep the one with the highest confidence or most recent
-		if existing, exists := vulnMap[vuln.ID]; !exists || vr.Confidence > existing.Confidence || vr.LastSeen.After(existing.LastSeen) {
-			vulnMap[vuln.ID] = &vr
-		}
-	}
-
-	// Convert map to slice
-	for _, vr := range vulnMap {
-		result.Vulnerabilities = append(result.Vulnerabilities, *vr)
+		return nil, err
 	}
 
 	return result, nil

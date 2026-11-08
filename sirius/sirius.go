@@ -56,7 +56,7 @@ type Vulnerability struct {
 	Remediation string   `json:"remediation,omitempty"`
 	Category    string   `json:"category,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
-	Confidence  float64  `json:"confidence,omitempty"`
+	Confidence  float64  `json:"confidence"`
 	// Additional metadata as JSON
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }

@@ -22,6 +22,7 @@ DB_HOST=sirius-postgres DB_USER=postgres DB_PASSWORD=... DB_NAME=sirius \
 go run ./cmd/migrate
 
 # Optional: AutoMigrate on connect for throwaway local DBs only
+# This does not replace the ledger migrator; 008 owns host_ports.state.
 export SIRIUS_SCHEMA_AUTO_MIGRATE=true
 
 # Tests only — destructive reset before AutoMigrate
@@ -36,7 +37,7 @@ database no longer drops tables by default.
 
 The numbered directories (`002_source_attribution`, …) remain for historical
 reference and one-off debugging. New deployments must use `cmd/migrate`, which
-applies equivalent idempotent steps (`001_baseline` … `007_...`).
+applies equivalent idempotent steps (`001_baseline` … `008_host_port_state`).
 
 ## Ledger
 
@@ -45,3 +46,12 @@ applies equivalent idempotent steps (`001_baseline` … `007_...`).
 | `schema_migrations_core` | Versions applied for Community/core schema |
 
 Pro editions use a separate `schema_migrations_pro` ledger (not in this repo).
+
+## Host/source port state
+
+Migration 008 requires a coordinated writer upgrade and an affected-host rescan.
+Read [008 rollout and compatibility notes](008_host_port_state.md) before release.
+
+## Source-specific vulnerability evidence
+
+Migration 009 preserves full findings per host/source. See [009_host_vulnerability_finding.md](009_host_vulnerability_finding.md) for compatibility, preflight, rollout, and isolated tests.

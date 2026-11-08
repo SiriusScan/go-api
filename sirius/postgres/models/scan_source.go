@@ -4,6 +4,8 @@ package models
 import (
 	"time"
 
+	"github.com/SiriusScan/go-api/sirius"
+
 	"gorm.io/gorm"
 )
 
@@ -37,8 +39,9 @@ type HostWithSources struct {
 type VulnerabilityWithSource struct {
 	Vulnerability
 	SourceAttribution
-	Port        *int   `json:"port,omitempty"`
-	ServiceInfo string `json:"service_info,omitempty"`
+	Port        *int                  `json:"port,omitempty"`
+	ServiceInfo string                `json:"service_info,omitempty"`
+	Finding     *sirius.Vulnerability `json:"finding,omitempty"`
 }
 
 // PortWithSource represents a port with its source attribution
@@ -49,7 +52,7 @@ type PortWithSource struct {
 
 // ScanHistory represents the timeline of scans for a host
 type ScanHistoryEntry struct {
-	gorm.Model               // Provides ID, CreatedAt, UpdatedAt, DeletedAt
+	gorm.Model              // Provides ID, CreatedAt, UpdatedAt, DeletedAt
 	HostID        uint      `json:"host_id"`
 	Source        string    `json:"source"`
 	SourceVersion string    `json:"source_version"`
@@ -79,4 +82,3 @@ type VulnerabilitySourceInfo struct {
 	AverageConfidence float64   `json:"average_confidence"`
 	TotalReports      int       `json:"total_reports"`
 }
- 
