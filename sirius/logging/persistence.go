@@ -1,7 +1,6 @@
 package logging
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -195,7 +194,9 @@ func (ep *EventPersistence) flushRoutine() {
 			// Final flush before stopping
 			ep.mutex.Lock()
 			if len(ep.buffer) > 0 {
-				ep.flushBufferUnsafe()
+				if err := ep.flushBufferUnsafe(); err != nil {
+					slog.Error("Final event flush failed", "error", err)
+				}
 			}
 			ep.mutex.Unlock()
 			return
@@ -211,13 +212,4 @@ func (ep *EventPersistence) Close() error {
 	time.Sleep(100 * time.Millisecond)
 
 	return nil
-}
-
-// Helper function to convert LogEntry to JSON for debugging
-func (ep *EventPersistence) logEntryToJSON(entry LogEntry) string {
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Sprintf("Error marshaling LogEntry: %v", err)
-	}
-	return string(data)
 }
