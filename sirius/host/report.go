@@ -11,6 +11,7 @@ import (
 
 	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
+	"github.com/SiriusScan/go-api/sirius/scope"
 	"gorm.io/gorm"
 )
 
@@ -70,7 +71,16 @@ func AddReport(report Report) error {
 	return NewHostRepository().addReport(report)
 }
 
+// AddReportScoped persists a report under a scope authorized by the caller.
+func AddReportScoped(resourceScope scope.ResourceScope, report Report) error {
+	return NewHostRepository().addReportScoped(resourceScope, report)
+}
+
 func (r *HostRepository) addReport(report Report) error {
+	return r.addReportScoped(scope.Global(), report)
+}
+
+func (r *HostRepository) addReportScoped(resourceScope scope.ResourceScope, report Report) error {
 	if err := ValidateReport(report); err != nil {
 		return err
 	}
@@ -103,7 +113,7 @@ func (r *HostRepository) addReport(report Report) error {
 				return err
 			}
 		}
-		hostID, err := repo.UpsertHost(report.Host.IP, report.Host.Hostname, report.Host.OS, report.Host.OSVersion, report.Host.HID)
+		hostID, err := repo.UpsertHostScoped(resourceScope, report.Host.IP, report.Host.Hostname, report.Host.OS, report.Host.OSVersion, report.Host.HID)
 		if err != nil {
 			return fmt.Errorf("upsert report host: %w", err)
 		}

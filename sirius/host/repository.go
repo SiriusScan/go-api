@@ -13,6 +13,7 @@ import (
 	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres"
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
+	"github.com/SiriusScan/go-api/sirius/scope"
 	"gorm.io/gorm"
 )
 
@@ -73,13 +74,18 @@ type VulnerabilityRelation struct {
 
 // UpsertHost creates or updates a host and returns its ID
 func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (hostID uint, err error) {
+	return r.UpsertHostScoped(scope.Global(), ip, hostname, os, osVersion, hid)
+}
+
+// UpsertHostScoped stores a host in the scope supplied by a trusted caller.
+func (r *HostRepository) UpsertHostScoped(resourceScope scope.ResourceScope, ip, hostname, os, osVersion, hid string) (hostID uint, err error) {
 	if r.db == nil {
 		return 0, fmt.Errorf("database connection not available")
 	}
 
 	var host models.Host
-	result := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, created_at, updated_at, deleted_at").
-		Where("ip = ?", ip).
+	result := r.db.Select("id, owner_subject_id, h_id, os, os_version, ip, hostname, agent_id, created_at, updated_at, deleted_at").
+		Where("ip = ? AND owner_subject_id = ?", ip, resourceScope.OwnerSubjectID).
 		First(&host)
 
 	if result.Error == nil {
@@ -110,6 +116,10 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 		return host.ID, nil
 	}
 
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return 0, fmt.Errorf("failed to find host: %w", result.Error)
+	}
+
 	// Host doesn't exist - create it
 	// Generate a unique HID if not provided to satisfy uniqueIndex constraint
 	hostHID := hid
@@ -122,11 +132,12 @@ func (r *HostRepository) UpsertHost(ip, hostname, os, osVersion, hid string) (ho
 	}
 
 	newHost := models.Host{
-		HID:       hostHID,
-		IP:        ip,
-		Hostname:  hostname,
-		OS:        os,
-		OSVersion: osVersion,
+		OwnerSubjectID: string(resourceScope.OwnerSubjectID),
+		HID:            hostHID,
+		IP:             ip,
+		Hostname:       hostname,
+		OS:             os,
+		OSVersion:      osVersion,
 	}
 
 	err = r.db.Create(&newHost).Error
@@ -219,14 +230,19 @@ func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score floa
 
 // GetHostWithRelations retrieves a host with ports and vulnerabilities using explicit JOINs
 func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, error) {
+	return r.GetHostWithRelationsScoped(scope.Global(), ip)
+}
+
+// GetHostWithRelationsScoped never searches outside the supplied scope.
+func (r *HostRepository) GetHostWithRelationsScoped(resourceScope scope.ResourceScope, ip string) (*HostWithRelations, error) {
 	if r.db == nil {
 		return nil, fmt.Errorf("database connection not available")
 	}
 
 	// First, get the host basic info
 	var host models.Host
-	err := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
-		Where("ip = ?", ip).
+	err := r.db.Select("id, owner_subject_id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
+		Where("ip = ? AND owner_subject_id = ?", ip, resourceScope.OwnerSubjectID).
 		First(&host).Error
 	if err != nil {
 		return nil, fmt.Errorf("host not found: %w", err)
@@ -303,13 +319,19 @@ func (r *HostRepository) GetHostWithRelations(ip string) (*HostWithRelations, er
 
 // GetAllHostsWithRelations retrieves all hosts with their ports and vulnerabilities
 func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error) {
+	return r.GetAllHostsWithRelationsScoped(scope.Global())
+}
+
+// GetAllHostsWithRelationsScoped lists only hosts in the supplied scope.
+func (r *HostRepository) GetAllHostsWithRelationsScoped(resourceScope scope.ResourceScope) ([]HostWithRelations, error) {
 	if r.db == nil {
 		return nil, fmt.Errorf("database connection not available")
 	}
 
 	// Get all hosts
 	var hosts []models.Host
-	err := r.db.Select("id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
+	err := r.db.Select("id, owner_subject_id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
+		Where("owner_subject_id = ?", resourceScope.OwnerSubjectID).
 		Find(&hosts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query hosts: %w", err)
@@ -317,16 +339,9 @@ func (r *HostRepository) GetAllHostsWithRelations() ([]HostWithRelations, error)
 
 	results := make([]HostWithRelations, 0, len(hosts))
 	for _, host := range hosts {
-		hostWithRelations, err := r.GetHostWithRelations(host.IP)
+		hostWithRelations, err := r.GetHostWithRelationsScoped(resourceScope, host.IP)
 		if err != nil {
-			slog.Warn("Failed to get relations for host", "ip", host.IP, "error", err)
-			// Still include the host but without relations
-			results = append(results, HostWithRelations{
-				Host:            host,
-				Ports:           []PortRelation{},
-				Vulnerabilities: []VulnerabilityRelation{},
-			})
-			continue
+			return nil, fmt.Errorf("failed to get relations for host: %w", err)
 		}
 		results = append(results, *hostWithRelations)
 	}

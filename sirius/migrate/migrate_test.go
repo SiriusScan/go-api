@@ -34,8 +34,8 @@ func TestMigrationsAreOrderedAndUnique(t *testing.T) {
 	if ms[0].Version != "001_baseline" {
 		t.Fatalf("first migration must be 001_baseline, got %s", ms[0].Version)
 	}
-	if ms[len(ms)-1].Version != "009_host_vulnerability_finding" {
-		t.Fatalf("last migration must be 009_..., got %s", ms[len(ms)-1].Version)
+	if ms[len(ms)-1].Version != "010_host_resource_scope" {
+		t.Fatalf("last migration must be 010_..., got %s", ms[len(ms)-1].Version)
 	}
 }
 

@@ -58,7 +58,7 @@ func portFixture(t *testing.T) *HostRepository {
 	t.Cleanup(func() { _ = tx.Rollback().Error })
 	for _, sql := range []string{
 		`SET LOCAL search_path TO pg_temp`,
-		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, h_id text, ip text, hostname text, os text, os_version text, agent_id bigint,
+		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', client_id bigint, h_id text, ip text, hostname text, os text, os_version text, agent_id bigint,
 		 software_inventory jsonb, system_fingerprint jsonb, agent_metadata jsonb, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE ports (id bigserial PRIMARY KEY, number int NOT NULL, protocol text NOT NULL, state text,
 		 created_at timestamptz, updated_at timestamptz, deleted_at timestamptz, UNIQUE(number, protocol)) ON COMMIT DROP`,

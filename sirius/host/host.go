@@ -7,13 +7,19 @@ import (
 	"github.com/SiriusScan/go-api/sirius"
 	"github.com/SiriusScan/go-api/sirius/postgres"
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
+	"github.com/SiriusScan/go-api/sirius/scope"
 )
 
 func GetHost(ip string) (sirius.Host, error) {
+	return GetHostScoped(scope.Global(), ip)
+}
+
+// GetHostScoped retrieves a host only from the given trusted scope.
+func GetHostScoped(resourceScope scope.ResourceScope, ip string) (sirius.Host, error) {
 	repo := NewHostRepository()
 
 	// Get host with explicit JOIN query
-	hostWithRelations, err := repo.GetHostWithRelations(ip)
+	hostWithRelations, err := repo.GetHostWithRelationsScoped(resourceScope, ip)
 	if err != nil {
 		return sirius.Host{}, err
 	}
@@ -23,10 +29,15 @@ func GetHost(ip string) (sirius.Host, error) {
 }
 
 func GetAllHosts() ([]sirius.Host, error) {
+	return GetAllHostsScoped(scope.Global())
+}
+
+// GetAllHostsScoped lists hosts only from the given trusted scope.
+func GetAllHostsScoped(resourceScope scope.ResourceScope) ([]sirius.Host, error) {
 	repo := NewHostRepository()
 
 	// Get all hosts with explicit JOIN queries
-	hostsWithRelations, err := repo.GetAllHostsWithRelations()
+	hostsWithRelations, err := repo.GetAllHostsWithRelationsScoped(resourceScope)
 	if err != nil {
 		return nil, err
 	}

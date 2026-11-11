@@ -33,6 +33,7 @@ func Migrations() []Migration {
 		{Version: "007_add_vulnerability_stats_indexes", Name: "Vulnerability statistics indexes", Apply: apply007},
 		{Version: "008_host_port_state", Name: "Host and source scoped port state", Apply: apply008},
 		{Version: "009_host_vulnerability_finding", Name: "Preserve source-specific vulnerability evidence", Apply: apply009},
+		{Version: "010_host_resource_scope", Name: "Host resource attribution", Apply: apply010},
 	}
 }
 
