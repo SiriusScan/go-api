@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://siriusscan.github.io/contracts/message/v1/scan-control.schema.json",
+  "type": "object",
+  "required": ["scan_id", "action"],
+  "properties": {
+    "scan_id": {"type":"string", "minLength":1},
+    "action": {"enum":["cancel", "force_cancel"]},
+    "state_mode": {"type":"string"}
+  }
+}

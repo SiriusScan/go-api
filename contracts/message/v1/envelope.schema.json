@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://siriusscan.github.io/contracts/message/v1/envelope.schema.json",
+  "type":"object",
+  "required":["spec_version","id","type","source","schema_version","created_at","payload"],
+  "properties":{
+    "spec_version":{"const":"1.0"}, "id":{"type":"string","minLength":1},
+    "type":{"type":"string","minLength":1}, "source":{"type":"string","minLength":1},
+    "schema_version":{"type":"string","minLength":1}, "created_at":{"type":"string","format":"date-time"},
+    "correlation_id":{"type":"string"}, "causation_id":{"type":"string"}, "idempotency_key":{"type":"string"},
+    "resource_scope":{"type":"object","properties":{"owner_subject_id":{"type":"string"}}}, "payload":{"type":"object"}
+  }
+}
