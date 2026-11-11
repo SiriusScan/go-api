@@ -19,6 +19,12 @@ import (
 // junction, not in the shared vulnerability catalog. Catalog fields remain for
 // legacy consumers; changing another host's catalog cannot change this snapshot.
 func (r *HostRepository) UpsertHostVulnerability(hostID uint, finding sirius.Vulnerability, source models.ScanSource) error {
+	return r.upsertHostVulnerability(hostID, finding, source, true)
+}
+
+// upsertHostVulnerability stores private observations on the host junction.
+// Scoped reports must not publish their contents into the shared catalog.
+func (r *HostRepository) upsertHostVulnerability(hostID uint, finding sirius.Vulnerability, source models.ScanSource, updateCatalog bool) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection not available")
 	}
@@ -41,7 +47,18 @@ func (r *HostRepository) UpsertHostVulnerability(hostID uint, finding sirius.Vul
 			return err
 		}
 		tr := &HostRepository{db: tx}
-		id, err := tr.UpsertVulnerability(finding.VID, finding.Title, finding.Description, finding.RiskScore)
+		var owner string
+		if err := tx.Model(&models.Host{}).Select("owner_subject_id").Where("id = ?", hostID).Scan(&owner).Error; err != nil {
+			return fmt.Errorf("lookup finding host scope: %w", err)
+		}
+		if owner != "" {
+			updateCatalog = false
+		}
+		title, description, score := finding.Title, finding.Description, finding.RiskScore
+		if !updateCatalog {
+			title, description, score = "", "", 0
+		}
+		id, err := tr.UpsertVulnerability(finding.VID, title, description, score)
 		if err != nil {
 			return err
 		}

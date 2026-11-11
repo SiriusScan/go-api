@@ -140,11 +140,14 @@ func (r *HostRepository) addReportScoped(resourceScope scope.ResourceScope, repo
 			}
 		}
 		for _, finding := range report.Host.Vulnerabilities {
-			if err := repo.UpsertHostVulnerability(hostID, finding, report.Source); err != nil {
+			if err := repo.upsertHostVulnerability(hostID, finding, report.Source, resourceScope.IsGlobal()); err != nil {
 				return fmt.Errorf("upsert report finding %s: %w", finding.VID, err)
 			}
 		}
 		for _, entry := range report.Catalog {
+			if !resourceScope.IsGlobal() {
+				continue
+			}
 			if _, err := repo.UpsertVulnerability(entry.VID, entry.Title, entry.Description, entry.RiskScore); err != nil {
 				return fmt.Errorf("enrich report catalog %s: %w", entry.VID, err)
 			}
