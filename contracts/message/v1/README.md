@@ -12,3 +12,14 @@ acknowledge only after required effects commit when manual acknowledgements are
 available, retain the same idempotency key on retries, and route poison messages
 to an error/dead-letter path. Delivery is not exactly once. Scope attribution is
 not itself authorization.
+
+`ReplyRouter` creates a unique correlation ID for each request and dispatches
+responses by that ID. Supply a reply destination exclusive to the client, or
+share a destination only when one consumer routes every delivery through the
+same router. Cancel the wait if publishing fails. Duplicate, late and unknown
+replies are rejected. The router is an in-process correlation helper; transport
+setup, durable delivery and acknowledgements remain the caller's responsibility.
+
+The fixture suite validates positive and negative examples against the checked-in
+schemas on every `go test` run. Optional fields can be added within v1; breaking
+changes require a new major version.
