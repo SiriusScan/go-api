@@ -212,3 +212,23 @@ func TestValidateAgentTokenDoesNotRestoreChangedRecords(t *testing.T) {
 		t.Fatal("legacy store performed unconditional refresh")
 	}
 }
+
+func TestAgentTokenMetadataSurvivesRefresh(t *testing.T) {
+	ctx := context.Background()
+	kv := &enrollmentKV{data: map[string]string{}}
+	want := AgentTokenMeta{AgentID: "fixture", Token: "synthetic", SubjectID: "opaque", CredentialID: "key-reference"}
+	ok, err := StoreAgentTokenWithMetadataIfAbsent(ctx, kv, want)
+	if !ok || err != nil {
+		t.Fatalf("create: %v %v", ok, err)
+	}
+	if ok, err := StoreAgentTokenWithMetadataIfAbsent(ctx, kv, AgentTokenMeta{AgentID: "fixture", Token: "other"}); ok || err != nil {
+		t.Fatalf("duplicate: %v %v", ok, err)
+	}
+	if _, err := ValidateAgentToken(ctx, kv, "fixture", "synthetic"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetAgentToken(ctx, kv, "fixture")
+	if err != nil || got.SubjectID != want.SubjectID || got.CredentialID != want.CredentialID || got.Token != want.Token || got.CreatedAt == "" || got.LastSeen == "" {
+		t.Fatalf("metadata lost: %+v %v", got, err)
+	}
+}

@@ -17,10 +17,12 @@ const (
 
 // AgentTokenMeta holds metadata for a per-agent authentication token.
 type AgentTokenMeta struct {
-	AgentID   string `json:"agent_id"`
-	Token     string `json:"token"`
-	CreatedAt string `json:"created_at"`
-	LastSeen  string `json:"last_seen"`
+	AgentID      string `json:"agent_id"`
+	SubjectID    string `json:"subject_id,omitempty"`
+	CredentialID string `json:"credential_id,omitempty"`
+	Token        string `json:"token"`
+	CreatedAt    string `json:"created_at"`
+	LastSeen     string `json:"last_seen"`
 }
 
 // GenerateAgentToken creates a cryptographically random token string for an

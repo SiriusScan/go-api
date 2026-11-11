@@ -31,19 +31,25 @@ func (s *valkeyStore) SetValueIfAbsent(ctx context.Context, key, value string) (
 // never overwritten, even if two callers have both just observed a missing key.
 // Stores without atomic creation are rejected rather than using GET then SET.
 func StoreAgentTokenIfAbsent(ctx context.Context, s KVStore, agentID, token string) (bool, error) {
+	return StoreAgentTokenWithMetadataIfAbsent(ctx, s, AgentTokenMeta{AgentID: agentID, Token: token})
+}
+
+// StoreAgentTokenWithMetadataIfAbsent atomically records optional neutral attribution.
+func StoreAgentTokenWithMetadataIfAbsent(ctx context.Context, s KVStore, meta AgentTokenMeta) (bool, error) {
 	creator, ok := s.(ValueCreator)
 	if !ok {
 		return false, fmt.Errorf("agent token store does not support atomic creation")
 	}
-	if agentID == "" || token == "" {
+	if meta.AgentID == "" || meta.Token == "" {
 		return false, fmt.Errorf("agent ID and token must not be empty")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	data, err := json.Marshal(AgentTokenMeta{AgentID: agentID, Token: token, CreatedAt: now, LastSeen: now})
+	meta.CreatedAt, meta.LastSeen = now, now
+	data, err := json.Marshal(meta)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal agent token meta: %w", err)
 	}
-	return creator.SetValueIfAbsent(ctx, agentTokenKey(agentID), string(data))
+	return creator.SetValueIfAbsent(ctx, agentTokenKey(meta.AgentID), string(data))
 }
 
 var _ ValueCreator = (*valkeyStore)(nil)
