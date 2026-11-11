@@ -65,7 +65,7 @@ func findingFixture(t *testing.T) *HostRepository {
 	t.Cleanup(func() { _ = tx.Rollback().Error })
 	for _, sql := range []string{
 		`SET LOCAL search_path TO pg_temp`,
-		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, h_id text, ip text, hostname text, os text, os_version text, agent_id bigint,
+		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', h_id text, ip text, hostname text, os text, os_version text, agent_id bigint,
           software_inventory jsonb, system_fingerprint jsonb, agent_metadata jsonb, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE ports (id bigint PRIMARY KEY, number int, protocol text, state text, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE host_ports (host_id bigint, port_id bigint, source text, source_version text, first_seen timestamp, last_seen timestamp, status text, notes text, state text) ON COMMIT DROP`,

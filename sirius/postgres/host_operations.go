@@ -20,7 +20,7 @@ func AddHost(db *gorm.DB, host models.Host) error {
 
 func GetHost(db *gorm.DB, ip string) (models.Host, error) {
 	var host models.Host
-	result := db.Preload("Ports").Preload("Vulnerabilities").Where("ip = ?", ip).First(&host)
+	result := db.Preload("Ports").Preload("Vulnerabilities").Where("ip = ? AND owner_subject_id = ?", ip, "").First(&host)
 	if result.Error != nil {
 		return models.Host{}, result.Error
 	}
@@ -30,7 +30,7 @@ func GetHost(db *gorm.DB, ip string) (models.Host, error) {
 
 func GetAllHosts(db *gorm.DB) ([]models.Host, error) {
 	var hosts []models.Host
-	result := db.Find(&hosts)
+	result := db.Where("owner_subject_id = ?", "").Find(&hosts)
 	if result.Error != nil {
 		return nil, result.Error
 	}

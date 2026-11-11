@@ -209,7 +209,7 @@ func TestReportInvalidLateFindingWritesNothing(t *testing.T) {
 func createReportTables(t *testing.T, db *gorm.DB, temporary bool) {
 	t.Helper()
 	for _, q := range []string{
-		`CREATE TEMP TABLE hosts (id bigserial PRIMARY KEY, h_id text UNIQUE, client_id bigint, ip text, hostname text, os text, os_version text, agent_id bigint, software_inventory jsonb, system_fingerprint jsonb, agent_metadata jsonb, created_at timestamptz, updated_at timestamptz, deleted_at timestamptz)`,
+		`CREATE TEMP TABLE hosts (id bigserial PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', h_id text UNIQUE, client_id bigint, ip text, hostname text, os text, os_version text, agent_id bigint, software_inventory jsonb, system_fingerprint jsonb, agent_metadata jsonb, created_at timestamptz, updated_at timestamptz, deleted_at timestamptz)`,
 		`CREATE TEMP TABLE ports (id bigserial PRIMARY KEY, number int NOT NULL, protocol text NOT NULL, state text, created_at timestamptz, updated_at timestamptz, deleted_at timestamptz, UNIQUE(number,protocol))`,
 		`CREATE TEMP TABLE host_ports (host_id bigint REFERENCES hosts(id), port_id bigint REFERENCES ports(id), source text, source_version text, first_seen timestamptz, last_seen timestamptz, status text, notes text, state text, PRIMARY KEY(host_id,port_id,source))`,
 		`CREATE TEMP TABLE vulnerabilities (id bigserial PRIMARY KEY, v_id text UNIQUE, title text, description text, risk_score double precision, created_at timestamptz, updated_at timestamptz, deleted_at timestamptz)`,

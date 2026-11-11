@@ -165,7 +165,7 @@ func DeleteHost(ip string) error {
 	}()
 
 	// Delete Host
-	if err := tx.Where("ip = ?", ip).Delete(&models.Host{}).Error; err != nil {
+	if err := tx.Where("ip = ? AND owner_subject_id = ?", ip, "").Delete(&models.Host{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -476,7 +476,7 @@ func GetHostSoftwareInventory(ip string) (*SoftwareInventoryData, error) {
 	}
 
 	var dbHost models.Host
-	result := db.Select("software_inventory").Where("ip = ?", ip).First(&dbHost)
+	result := db.Select("software_inventory").Where("ip = ? AND owner_subject_id = ?", ip, "").First(&dbHost)
 
 	if result.Error != nil {
 		return nil, result.Error
@@ -540,7 +540,7 @@ func GetHostSystemFingerprint(ip string) (*SystemFingerprintData, error) {
 	}
 
 	var dbHost models.Host
-	result := db.Select("system_fingerprint").Where("ip = ?", ip).First(&dbHost)
+	result := db.Select("system_fingerprint").Where("ip = ? AND owner_subject_id = ?", ip, "").First(&dbHost)
 
 	if result.Error != nil {
 		return nil, result.Error

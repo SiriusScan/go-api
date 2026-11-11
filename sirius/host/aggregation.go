@@ -24,7 +24,7 @@ func currentVulnerabilityFindings(db *gorm.DB) *gorm.DB {
 	return db.Table("hosts").
 		Joins("JOIN (?) AS findings ON findings.host_id = hosts.id", findings).
 		Joins("JOIN vulnerabilities ON vulnerabilities.id = findings.vulnerability_id").
-		Where("hosts.deleted_at IS NULL AND vulnerabilities.deleted_at IS NULL")
+		Where("hosts.deleted_at IS NULL AND hosts.owner_subject_id = '' AND vulnerabilities.deleted_at IS NULL")
 }
 
 func hostRiskStatisticsQuery(db *gorm.DB, ip string) *gorm.DB {

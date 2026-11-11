@@ -24,7 +24,7 @@ func GetHostWithSources(ip string) (models.HostWithSources, error) {
 	var result models.HostWithSources
 
 	// Get the host
-	err := db.Where("ip = ?", ip).First(&result.Host).Error
+	err := db.Where("ip = ? AND owner_subject_id = ?", ip, "").First(&result.Host).Error
 	if err != nil {
 		return result, fmt.Errorf("host %s not found: %w", ip, err)
 	}
@@ -78,9 +78,10 @@ func GetVulnerabilityHistory(hostID uint, vulnID uint) ([]models.SourceAttributi
 	db := postgres.GetDB()
 	var history []models.SourceAttribution
 
-	err := db.Table("host_vulnerabilities").
-		Select("source, source_version, first_seen, last_seen, status, confidence, notes").
-		Where("host_id = ? AND vulnerability_id = ?", hostID, vulnID).
+	err := db.Table("host_vulnerabilities hv").
+		Select("hv.source, hv.source_version, hv.first_seen, hv.last_seen, hv.status, hv.confidence, hv.notes").
+		Joins("JOIN hosts h ON h.id = hv.host_id").
+		Where("hv.host_id = ? AND hv.vulnerability_id = ? AND h.owner_subject_id = ? AND h.deleted_at IS NULL", hostID, vulnID, "").
 		Order("first_seen ASC").
 		Scan(&history).Error
 
@@ -100,7 +101,7 @@ func GetSourceCoverageStats() ([]models.SourceCoverageStats, error) {
 			MAX(last_seen) as last_scan_time,
 			AVG(confidence) as average_confidence
 		FROM host_vulnerabilities 
-		WHERE status = 'active'
+		WHERE status = 'active' AND host_id IN (SELECT id FROM hosts WHERE owner_subject_id = '' AND deleted_at IS NULL)
 		GROUP BY source
 		UNION ALL
 		SELECT 
@@ -110,8 +111,8 @@ func GetSourceCoverageStats() ([]models.SourceCoverageStats, error) {
 			MAX(last_seen) as last_scan_time,
 			1.0 as average_confidence
 		FROM host_ports 
-		WHERE status = 'active' AND source NOT IN (
-			SELECT DISTINCT source FROM host_vulnerabilities WHERE status = 'active'
+		WHERE status = 'active' AND host_id IN (SELECT id FROM hosts WHERE owner_subject_id = '' AND deleted_at IS NULL) AND source NOT IN (
+			SELECT DISTINCT source FROM host_vulnerabilities WHERE status = 'active' AND host_id IN (SELECT id FROM hosts WHERE owner_subject_id = '' AND deleted_at IS NULL)
 		)
 		GROUP BY source
 	`).Scan(&stats).Error
@@ -132,6 +133,7 @@ func GetVulnerabilitySources(vulnID string) ([]models.VulnerabilitySourceInfo, e
 				AVG(hv.confidence) as average_confidence,
 				COUNT(*) as total_reports`).
 		Joins("JOIN vulnerabilities v ON hv.vulnerability_id = v.id").
+		Joins("JOIN hosts h ON hv.host_id = h.id AND h.deleted_at IS NULL AND h.owner_subject_id = ''").
 		Where("v.v_id = ? AND hv.status = 'active'", vulnID).
 		Group("hv.source, hv.source_version").
 		Order("first_detected ASC").

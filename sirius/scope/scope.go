@@ -3,6 +3,9 @@ package scope
 
 import "github.com/SiriusScan/go-api/sirius/identity"
 
+// Version identifies the resource scope wire contract.
+const Version = "1.0"
+
 // ResourceScope attributes a resource to an opaque subject. Callers must
 // authorize the scope at their trust boundary before passing it to storage.
 type ResourceScope struct {

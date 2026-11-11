@@ -71,7 +71,7 @@ func aggregationFixture(t *testing.T) *gorm.DB {
 	t.Cleanup(func() { _ = tx.Rollback().Error })
 	for _, sql := range []string{
 		`SET LOCAL search_path TO pg_temp`,
-		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, h_id text, ip text, hostname text, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
+		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', h_id text, ip text, hostname text, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE vulnerabilities (id bigint PRIMARY KEY, v_id text, title text, description text, risk_score double precision, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE host_vulnerabilities (host_id bigint, vulnerability_id bigint, source text, status text, confidence double precision, last_seen timestamp, finding jsonb) ON COMMIT DROP`,
 		`INSERT INTO hosts (id, h_id, ip, hostname, updated_at, deleted_at) VALUES
