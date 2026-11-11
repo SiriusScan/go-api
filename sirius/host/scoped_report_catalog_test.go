@@ -42,6 +42,30 @@ func TestScopedReportsDoNotPublishPrivateFindingToSharedCatalog(t *testing.T) {
 	if len(summary) != 1 || summary[0].Title != "public" || summary[0].Description != "public description" {
 		t.Fatalf("global summary leaked: %+v", summary)
 	}
+	// A later legacy/global observation of a scoped-first VID must not inherit
+	// the earlier subject's private title, description or risk score.
+	later := Report{Host: sirius.Host{IP: "192.0.2.2", HID: "later-global", Vulnerabilities: []sirius.Vulnerability{{VID: "CVE-PRIVATE"}}}, Source: source}
+	if err := repo.addReport(later); err != nil {
+		t.Fatal(err)
+	}
+	summary = nil
+	if err := vulnerabilitySummariesQuery(repo.db).Scan(&summary).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range summary {
+		if entry.VID == "CVE-PRIVATE" && (entry.Title != "" || entry.Description != "" || entry.RiskScore != 0) {
+			t.Fatalf("scoped-first observation leaked: %+v", entry)
+		}
+	}
+	var laterFound bool
+	for _, entry := range summary {
+		if entry.VID == "CVE-PRIVATE" {
+			laterFound = true
+		}
+	}
+	if !laterFound {
+		t.Fatal("missing later global observation")
+	}
 	host, err := repo.GetHostWithRelationsScoped(alice, "192.0.2.1")
 	if err != nil || len(host.Vulnerabilities) != 2 {
 		t.Fatalf("scoped observations: %+v %v", host, err)

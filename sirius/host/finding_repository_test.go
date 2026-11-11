@@ -292,8 +292,8 @@ func TestFindingConcurrentIngestion(t *testing.T) {
 		}
 	})
 	for _, sql := range []string{
-		`CREATE TABLE hosts(id bigint PRIMARY KEY)`,
-		`INSERT INTO hosts VALUES(1),(2)`,
+		`CREATE TABLE hosts(id bigint PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', deleted_at timestamp)`,
+		`INSERT INTO hosts(id) VALUES(1),(2)`,
 		`CREATE TABLE vulnerabilities(id bigserial PRIMARY KEY,v_id text UNIQUE,title text,description text,risk_score double precision,created_at timestamp,updated_at timestamp,deleted_at timestamp)`,
 		`CREATE TABLE host_vulnerabilities(host_id bigint REFERENCES hosts(id),vulnerability_id bigint REFERENCES vulnerabilities(id),source text,source_version text,first_seen timestamp,last_seen timestamp,status text,confidence double precision,port int,service_info text,notes text,finding jsonb,PRIMARY KEY(host_id,vulnerability_id,source))`,
 	} {
