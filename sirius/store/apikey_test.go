@@ -206,3 +206,27 @@ func TestLegacyJSONWithoutScopesStaysUnrestricted(t *testing.T) {
 		t.Fatalf("legacy JSON loaded as %#v", loaded)
 	}
 }
+
+func TestOwnedEnrollmentKey(t *testing.T) {
+	ctx := context.Background()
+	kv := newMemoryKV()
+	meta, err := StoreOwnedAPIKey(ctx, kv, "sk_owned_enrollment", "enroll", "issuer", "subject-1", []string{ScopeAgentEnroll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ValidateAPIKey(ctx, kv, "sk_owned_enrollment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.OwnerSubjectID != "subject-1" || meta.OwnerSubjectID != loaded.OwnerSubjectID || !loaded.HasScope(ScopeAgentEnroll) || loaded.AllowsUnrestricted() {
+		t.Fatalf("unexpected metadata: %+v", loaded)
+	}
+	for _, owner := range []string{"", " subject-1"} {
+		if _, err := StoreOwnedAPIKey(ctx, kv, "sk_invalid", "", "", owner, []string{ScopeAgentEnroll}); err == nil {
+			t.Fatal("invalid owner accepted")
+		}
+	}
+	if _, err := StoreOwnedAPIKey(ctx, kv, "sk_invalid", "", "", "subject-1", nil); err == nil {
+		t.Fatal("unrestricted owned key accepted")
+	}
+}

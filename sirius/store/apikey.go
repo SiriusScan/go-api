@@ -31,13 +31,14 @@ const (
 // API; unknown scope names are rejected at creation time and fail closed if
 // they are ever persisted.
 type APIKeyMeta struct {
-	ID         string   `json:"id"`               // SHA-256 hash of the raw key (also used as Valkey key suffix)
-	Label      string   `json:"label"`            // Human-readable label
-	Prefix     string   `json:"prefix"`           // First 8 characters of the raw key for display
-	CreatedBy  string   `json:"created_by"`       // User or system that created the key
-	CreatedAt  string   `json:"created_at"`       // RFC-3339 timestamp
-	LastUsedAt string   `json:"last_used_at"`     // RFC-3339 timestamp, empty if never used
-	Scopes     []string `json:"scopes,omitempty"` // Optional allow-list; empty preserves legacy full access
+	OwnerSubjectID string   `json:"owner_subject_id,omitempty"` // Opaque subject asserted by a trusted key issuer.
+	ID             string   `json:"id"`                         // SHA-256 hash of the raw key (also used as Valkey key suffix)
+	Label          string   `json:"label"`                      // Human-readable label
+	Prefix         string   `json:"prefix"`                     // First 8 characters of the raw key for display
+	CreatedBy      string   `json:"created_by"`                 // User or system that created the key
+	CreatedAt      string   `json:"created_at"`                 // RFC-3339 timestamp
+	LastUsedAt     string   `json:"last_used_at"`               // RFC-3339 timestamp, empty if never used
+	Scopes         []string `json:"scopes,omitempty"`           // Optional allow-list; empty preserves legacy full access
 }
 
 // ScopeMCPRead is the only scope currently granted to dedicated MCP readers.
@@ -45,10 +46,14 @@ type APIKeyMeta struct {
 // grants key management, writes, or generic store/queue/log/admin access.
 const ScopeMCPRead = "mcp:read"
 
+// ScopeAgentEnroll grants enrollment only when enforced by the receiving API.
+const ScopeAgentEnroll = "agent:enroll"
+
 // knownAPIKeyScopes is the closed set of scopes a key may carry. Adding a
 // scope here is not enough to authorize anything; the API must also enforce it.
 var knownAPIKeyScopes = map[string]struct{}{
-	ScopeMCPRead: {},
+	ScopeMCPRead:     {},
+	ScopeAgentEnroll: {},
 }
 
 // GenerateAPIKey creates a cryptographically random API key with the sk_ prefix.
@@ -94,6 +99,22 @@ func StoreAPIKeyWithScopes(ctx context.Context, s KVStore, rawKey, label, create
 		return APIKeyMeta{}, fmt.Errorf("scopes are required")
 	}
 	return storeAPIKey(ctx, s, rawKey, label, createdBy, normalized)
+}
+
+// StoreOwnedAPIKey persists a scoped key with an opaque owner supplied by a
+// trusted issuer. Owner metadata conveys no authorization by itself.
+func StoreOwnedAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy, owner string, scopes []string) (APIKeyMeta, error) {
+	if owner == "" || strings.TrimSpace(owner) != owner {
+		return APIKeyMeta{}, fmt.Errorf("valid owner subject required")
+	}
+	normalized, err := NormalizeAPIKeyScopes(scopes)
+	if err != nil {
+		return APIKeyMeta{}, err
+	}
+	if len(normalized) == 0 {
+		return APIKeyMeta{}, fmt.Errorf("owned keys require scopes")
+	}
+	return storeAPIKeyOwned(ctx, s, rawKey, label, createdBy, normalized, owner)
 }
 
 // NormalizeAPIKeyScopes validates and canonicalizes a requested scope list.
@@ -155,18 +176,23 @@ func (m APIKeyMeta) HasScope(scope string) bool {
 }
 
 func storeAPIKey(ctx context.Context, s KVStore, rawKey, label, createdBy string, scopes []string) (APIKeyMeta, error) {
+	return storeAPIKeyOwned(ctx, s, rawKey, label, createdBy, scopes, "")
+}
+
+func storeAPIKeyOwned(ctx context.Context, s KVStore, rawKey, label, createdBy string, scopes []string, owner string) (APIKeyMeta, error) {
 	keyHash := hashKey(rawKey)
 	var storedScopes []string
 	if len(scopes) > 0 {
 		storedScopes = append([]string(nil), scopes...)
 	}
 	meta := APIKeyMeta{
-		ID:        keyHash,
-		Label:     label,
-		Prefix:    safePrefix(rawKey),
-		CreatedBy: createdBy,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Scopes:    storedScopes,
+		OwnerSubjectID: owner,
+		ID:             keyHash,
+		Label:          label,
+		Prefix:         safePrefix(rawKey),
+		CreatedBy:      createdBy,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		Scopes:         storedScopes,
 	}
 
 	data, err := json.Marshal(meta)
