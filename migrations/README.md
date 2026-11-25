@@ -61,7 +61,9 @@ bound the time spent acquiring locks and applying pending steps.
 
 Go services can use `migrate.VerifyContext` before startup to check the required
 versions with read-only queries. A missing ledger or version returns a
-`*migrate.PendingVersionsError` with the ordered missing versions.
+`*migrate.PendingVersionsError` with the ordered missing versions. For a
+process launched with `SIRIUS_SCHEMA_MODE=verify`, the SDK also skips legacy
+on-connect AutoMigrate and reset, including when their environment flags are set.
 
 ## Host/source port state
 
