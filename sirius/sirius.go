@@ -169,9 +169,13 @@ func (h *Host) String() string {
 }
 
 type Port struct {
-	Number   int    `json:"number"` // Port number (22, 80, 443, etc.)
-	Protocol string `json:"protocol"`
-	State    string `json:"state"`
+	Number           int    `json:"number"` // Port number (22, 80, 443, etc.)
+	Protocol         string `json:"protocol"`
+	State            string `json:"state"`
+	ServiceName      string `json:"service_name,omitempty"`
+	ServiceProduct   string `json:"service_product,omitempty"`
+	ServiceVersion   string `json:"service_version,omitempty"`
+	ServiceExtraInfo string `json:"service_extrainfo,omitempty"`
 }
 
 // String returns a safe string representation

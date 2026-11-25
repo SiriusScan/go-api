@@ -238,9 +238,13 @@ func convertHostWithRelationsToSiriusHost(hwr *HostWithRelations) sirius.Host {
 	var siriusPorts []sirius.Port
 	for _, pr := range hwr.Ports {
 		siriusPorts = append(siriusPorts, sirius.Port{
-			Number:   pr.Port.Number,
-			Protocol: pr.Port.Protocol,
-			State:    pr.Port.State,
+			Number:           pr.Port.Number,
+			Protocol:         pr.Port.Protocol,
+			State:            pr.Port.State,
+			ServiceName:      pr.ServiceName,
+			ServiceProduct:   pr.ServiceProduct,
+			ServiceVersion:   pr.ServiceVersion,
+			ServiceExtraInfo: pr.ServiceExtraInfo,
 		})
 	}
 

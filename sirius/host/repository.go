@@ -49,13 +49,17 @@ type HostWithRelations struct {
 
 // PortRelation represents a port with source attribution
 type PortRelation struct {
-	Port          models.Port
-	Source        string
-	SourceVersion string
-	FirstSeen     time.Time
-	LastSeen      time.Time
-	Status        string
-	Notes         string
+	Port             models.Port
+	Source           string
+	SourceVersion    string
+	FirstSeen        time.Time
+	LastSeen         time.Time
+	Status           string
+	Notes            string
+	ServiceName      string
+	ServiceProduct   string
+	ServiceVersion   string
+	ServiceExtraInfo string
 }
 
 // VulnerabilityRelation represents a vulnerability with source attribution
@@ -257,7 +261,8 @@ func (r *HostRepository) GetHostWithRelationsScoped(resourceScope scope.Resource
 	portQuery := `
 		SELECT 
 			p.id, p.number, p.protocol, COALESCE(NULLIF(hp.state, ''), 'unknown'), p.created_at, p.updated_at, p.deleted_at,
-			hp.source, hp.source_version, hp.first_seen, hp.last_seen, hp.status, hp.notes
+			hp.source, hp.source_version, hp.first_seen, hp.last_seen, hp.status, hp.notes,
+			COALESCE(hp.service_name, ''), COALESCE(hp.service_product, ''), COALESCE(hp.service_version, ''), COALESCE(hp.service_extrainfo, '')
 		FROM host_ports hp
 		JOIN ports p ON hp.port_id = p.id
 		WHERE hp.host_id = ? AND hp.status = 'active' AND p.deleted_at IS NULL
@@ -281,6 +286,7 @@ func (r *HostRepository) GetHostWithRelationsScoped(resourceScope scope.Resource
 			&port.CreatedAt, &port.UpdatedAt, &port.DeletedAt,
 			&pr.Source, &pr.SourceVersion, &firstSeen, &lastSeen,
 			&pr.Status, &pr.Notes,
+			&pr.ServiceName, &pr.ServiceProduct, &pr.ServiceVersion, &pr.ServiceExtraInfo,
 		)
 		if err != nil {
 			slog.Warn("Error scanning port row", "error", err)
@@ -296,10 +302,29 @@ func (r *HostRepository) GetHostWithRelationsScoped(resourceScope scope.Resource
 
 		pr.Port = port
 
-		// Deduplicate ports (same port can have multiple sources)
-		// Keep the one with the most recent last_seen
-		if existing, exists := portMap[port.ID]; !exists || pr.LastSeen.After(existing.LastSeen) {
+		// Deduplicate ports (same port can have multiple sources, e.g. naabu + nmap).
+		// Keep the most recent observation, while preserving non-empty service
+		// identification from whichever source detected it.
+		existing, exists := portMap[port.ID]
+		if !exists {
 			portMap[port.ID] = &pr
+			continue
+		}
+		prHasSvc := pr.ServiceName != "" || pr.ServiceProduct != "" || pr.ServiceVersion != "" || pr.ServiceExtraInfo != ""
+		exHasSvc := existing.ServiceName != "" || existing.ServiceProduct != "" || existing.ServiceVersion != "" || existing.ServiceExtraInfo != ""
+		if pr.LastSeen.After(existing.LastSeen) {
+			if !prHasSvc && exHasSvc {
+				pr.ServiceName = existing.ServiceName
+				pr.ServiceProduct = existing.ServiceProduct
+				pr.ServiceVersion = existing.ServiceVersion
+				pr.ServiceExtraInfo = existing.ServiceExtraInfo
+			}
+			portMap[port.ID] = &pr
+		} else if !exHasSvc && prHasSvc {
+			existing.ServiceName = pr.ServiceName
+			existing.ServiceProduct = pr.ServiceProduct
+			existing.ServiceVersion = pr.ServiceVersion
+			existing.ServiceExtraInfo = pr.ServiceExtraInfo
 		}
 	}
 

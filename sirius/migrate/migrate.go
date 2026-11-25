@@ -43,6 +43,7 @@ func Migrations() []Migration {
 		{Version: "008_host_port_state", Name: "Host and source scoped port state", Apply: apply008},
 		{Version: "009_host_vulnerability_finding", Name: "Preserve source-specific vulnerability evidence", Apply: apply009},
 		{Version: "010_host_resource_scope", Name: "Host resource attribution", Apply: apply010},
+		{Version: "011_host_port_service", Name: "Host and source scoped port service metadata", Apply: apply011},
 	}
 }
 

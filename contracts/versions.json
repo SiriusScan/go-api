@@ -3,5 +3,5 @@
   "message_envelope": "1.0",
   "scan_job": "1.0",
   "scan_control": "1.0",
-  "core_schema_latest": "010_host_resource_scope"
+  "core_schema_latest": "011_host_port_service"
 }

@@ -134,8 +134,26 @@ func (r *HostRepository) addReportScoped(resourceScope scope.ResourceScope, repo
 			}
 			return ports[i].Protocol < ports[j].Protocol
 		})
+		servicesByPort := make(map[int]sirius.Service, len(report.Host.Services))
+		for _, svc := range report.Host.Services {
+			if svc.Port > 0 && svc.Port <= 65535 {
+				servicesByPort[svc.Port] = svc
+			}
+		}
 		for _, port := range ports {
-			if err := repo.UpsertHostPort(hostID, port.Number, port.Protocol, port.State, report.Source); err != nil {
+			svc := PortService{
+				Name:      port.ServiceName,
+				Product:   port.ServiceProduct,
+				Version:   port.ServiceVersion,
+				ExtraInfo: port.ServiceExtraInfo,
+			}
+			if svc.normalized().isEmpty() {
+				if legacy, ok := servicesByPort[port.Number]; ok {
+					svc.Name = legacy.Product
+					svc.Version = legacy.Version
+				}
+			}
+			if err := repo.UpsertHostPortWithService(hostID, port.Number, port.Protocol, port.State, svc, report.Source); err != nil {
 				return fmt.Errorf("upsert report port %d/%s: %w", port.Number, port.Protocol, err)
 			}
 		}
