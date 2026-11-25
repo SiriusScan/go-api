@@ -334,3 +334,100 @@ func TestReportConcurrentRetryAndReversedFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestConcurrentAddHostWithSourceSharedNewCVE(t *testing.T) {
+	dsn := os.Getenv("SIRIUS_REPORT_TEST_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("SIRIUS_FINDING_TEST_DSN")
+	}
+	if dsn == "" {
+		t.Skip("set SIRIUS_REPORT_TEST_DSN to disposable PostgreSQL")
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("vuln_vid_race_%d", time.Now().UnixNano())
+	cfg.RuntimeParams["search_path"] = name
+	cfg.RuntimeParams["statement_timeout"] = "5000"
+	pool := stdlib.OpenDB(*cfg)
+	pool.SetMaxOpenConns(16)
+	t.Cleanup(func() { _ = pool.Close() })
+	db, err := gorm.Open(pgdriver.New(pgdriver.Config{Conn: pool}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE SCHEMA " + name).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Exec("DROP SCHEMA " + name + " CASCADE").Error; err != nil {
+			t.Error(err)
+		}
+	})
+	createReportTables(t, db, false)
+	repo := &HostRepository{db: db}
+
+	const hostCount = 6
+	const sharedCVE = "CVE-2026-99999"
+	// Launch both direct UpsertVulnerability writers (without report advisory lock)
+	// and full AddHostWithSource/addReport writers for the same brand-new CVE.
+	totalWorkers := hostCount * 2
+	start := make(chan struct{})
+	results := make(chan error, totalWorkers)
+
+	for i := 0; i < hostCount; i++ {
+		go func(idx int) {
+			<-start
+			_, err := repo.UpsertVulnerability(sharedCVE, sharedCVE, fmt.Sprintf("direct worker %d", idx), 9.4)
+			results <- err
+		}(i)
+		go func(idx int) {
+			<-start
+			report := Report{
+				Host: sirius.Host{
+					IP:       fmt.Sprintf("192.0.2.%d", 101+idx),
+					HID:      fmt.Sprintf("race-host-%d", idx),
+					Hostname: fmt.Sprintf("host-%d.test", idx),
+					Vulnerabilities: []sirius.Vulnerability{
+						{
+							VID:         sharedCVE,
+							Title:       sharedCVE,
+							Description: fmt.Sprintf("Observed on host %d", idx),
+							RiskScore:   9.4,
+							Confidence:  0.75,
+						},
+					},
+				},
+				Source: models.ScanSource{Name: "nmap", Version: "7.95", Config: "quick"},
+			}
+			results <- repo.addReport(report)
+		}(i)
+	}
+
+	close(start)
+	for i := 0; i < totalWorkers; i++ {
+		if err := <-results; err != nil {
+			t.Errorf("concurrent write failed: %v", err)
+		}
+	}
+
+	var vulnRows []models.Vulnerability
+	if err := db.Where("v_id = ?", sharedCVE).Find(&vulnRows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(vulnRows) != 1 {
+		t.Fatalf("expected exactly 1 vulnerabilities row for %s, got %d", sharedCVE, len(vulnRows))
+	}
+
+	var linkedHosts int64
+	if err := db.Table("host_vulnerabilities").
+		Where("vulnerability_id = ?", vulnRows[0].ID).
+		Distinct("host_id").
+		Count(&linkedHosts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if linkedHosts != hostCount {
+		t.Fatalf("expected all %d hosts linked to vulnerability %d, got %d", hostCount, vulnRows[0].ID, linkedHosts)
+	}
+}

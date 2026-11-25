@@ -15,6 +15,7 @@ import (
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
 	"github.com/SiriusScan/go-api/sirius/scope"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // generateHostID creates a unique host identifier for scan-discovered hosts
@@ -173,59 +174,57 @@ func (r *HostRepository) UpdateHostJSONB(hostID uint, softwareInventory, systemF
 	return r.db.Model(&models.Host{}).Where("id = ?", hostID).Updates(updates).Error
 }
 
-// UpsertVulnerability creates or finds a vulnerability by VID, returns its ID
+// UpsertVulnerability creates or finds a vulnerability by VID, returns its ID.
+// Uses ON CONFLICT (v_id) DO NOTHING followed by SELECT so concurrent writers
+// introducing the same brand-new VID never collide on idx_vulnerabilities_vid.
 func (r *HostRepository) UpsertVulnerability(vid, title, desc string, score float64) (vulnID uint, err error) {
 	if r.db == nil {
 		return 0, fmt.Errorf("database connection not available")
 	}
 
-	var vuln models.Vulnerability
-	result := r.db.Select("id, v_id, description, title, risk_score, created_at, updated_at, deleted_at").
-		Where("v_id = ?", vid).
-		First(&vuln)
-
-	if result.Error == nil {
-		// Vulnerability exists - update if needed
-		updates := map[string]interface{}{
-			"updated_at": time.Now(),
-		}
-		if title != "" && vuln.Title != title {
-			updates["title"] = title
-		}
-		if desc != "" && vuln.Description != desc {
-			updates["description"] = desc
-		}
-		if score > 0 && vuln.RiskScore != score {
-			updates["risk_score"] = score
-		}
-
-		if len(updates) > 1 { // More than just updated_at
-			err = r.db.Model(&vuln).Updates(updates).Error
-			if err != nil {
-				return 0, fmt.Errorf("failed to update vulnerability: %w", err)
-			}
-		}
-		return vuln.ID, nil
-	}
-
-	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return 0, fmt.Errorf("failed to find vulnerability: %w", result.Error)
-	}
-
-	// Vulnerability doesn't exist - create it
 	newVuln := models.Vulnerability{
 		VID:         vid,
 		Title:       title,
 		Description: desc,
 		RiskScore:   score,
 	}
-
-	err = r.db.Create(&newVuln).Error
-	if err != nil {
+	if err := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "v_id"}},
+		DoNothing: true,
+	}).Create(&newVuln).Error; err != nil {
 		return 0, fmt.Errorf("failed to create vulnerability: %w", err)
 	}
 
-	return newVuln.ID, nil
+	var vuln models.Vulnerability
+	if err := r.db.Select("id, v_id, description, title, risk_score, created_at, updated_at, deleted_at").
+		Where("v_id = ?", vid).
+		First(&vuln).Error; err != nil {
+		return 0, fmt.Errorf("failed to find vulnerability: %w", err)
+	}
+
+	// Update existing catalog row when non-empty fresher fields are supplied.
+	// Scoped callers pass empty title/desc and score 0, leaving len(updates) == 1
+	// so no update occurs and private findings never leak into the shared catalog.
+	updates := map[string]interface{}{
+		"updated_at": time.Now(),
+	}
+	if title != "" && vuln.Title != title {
+		updates["title"] = title
+	}
+	if desc != "" && vuln.Description != desc {
+		updates["description"] = desc
+	}
+	if score > 0 && vuln.RiskScore != score {
+		updates["risk_score"] = score
+	}
+
+	if len(updates) > 1 { // More than just updated_at
+		if err := r.db.Model(&vuln).Updates(updates).Error; err != nil {
+			return 0, fmt.Errorf("failed to update vulnerability: %w", err)
+		}
+	}
+
+	return vuln.ID, nil
 }
 
 // GetHostWithRelations retrieves a host with ports and vulnerabilities using explicit JOINs
