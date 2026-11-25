@@ -30,24 +30,28 @@ func TestAcceptedReportHistoryQuery(t *testing.T) {
 	when := time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC)
 	const ip = "192.0.2.1"
 	for _, tc := range []struct {
-		name     string
-		position *acceptedReportCursor
-		clause   string
-		args     []any
+		name         string
+		position     *acceptedReportCursor
+		clauses      []string
+		journalReads int
+		args         []any
 	}{
-		{"first page", nil, "", []any{ip, scoped.OwnerSubjectID, 1, 3}},
-		{"timed cursor", &acceptedReportCursor{ReportID: 8, AcceptedAt: &when},
-			"(entry.scan_time, entry.id) < ($4, $5) OR entry.scan_time IS NULL",
-			[]any{ip, scoped.OwnerSubjectID, 1, when, uint(8), 3}},
-		{"undated cursor", &acceptedReportCursor{ReportID: 8},
+		{"first page", nil, nil, 1, []any{ip, scoped.OwnerSubjectID, 1, 3}},
+		{"timed cursor", &acceptedReportCursor{ReportID: 8, AcceptedAt: &when}, []string{
+			"(entry.scan_time, entry.id) < ($4, $5) ORDER BY entry.scan_time DESC NULLS LAST, entry.id DESC LIMIT $6",
+			"UNION ALL",
+			"entry.scan_time IS NULL ORDER BY entry.scan_time DESC NULLS LAST, entry.id DESC LIMIT $7",
+			"ORDER BY candidate.accepted_at DESC NULLS LAST, candidate.report_id DESC LIMIT $8",
+		}, 2, []any{ip, scoped.OwnerSubjectID, 1, when, uint(8), 3, 3, 3}},
+		{"undated cursor", &acceptedReportCursor{ReportID: 8}, []string{
 			"entry.scan_time IS NULL AND entry.id < $4",
-			[]any{ip, scoped.OwnerSubjectID, 1, uint(8), 3}},
+		}, 1, []any{ip, scoped.OwnerSubjectID, 1, uint(8), 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var rows []acceptedReportHistoryRow
 			statement := acceptedReportHistoryQuery(db, scoped, ip, 2, tc.position).Find(&rows).Statement
 			sql := strings.ReplaceAll(statement.SQL.String(), `"`, "")
-			for _, part := range []string{
+			for _, part := range append([]string{
 				"hosts.ip = $1 AND hosts.owner_subject_id = $2",
 				"hosts.deleted_at IS NULL",
 				"ORDER BY hosts.id ASC LIMIT $3",
@@ -56,11 +60,13 @@ func TestAcceptedReportHistoryQuery(t *testing.T) {
 				"entry.findings_count AS submitted_item_count",
 				"ORDER BY entry.scan_time DESC NULLS LAST, entry.id DESC LIMIT ",
 				"ORDER BY journal.accepted_at DESC NULLS LAST, journal.report_id DESC",
-				tc.clause,
-			} {
+			}, tc.clauses...) {
 				if !strings.Contains(sql, part) {
 					t.Errorf("query missing %q: %s", part, sql)
 				}
+			}
+			if got := strings.Count(sql, "entry.host_id = target_host.id AND entry.deleted_at IS NULL"); got != tc.journalReads {
+				t.Errorf("scoped journal reads = %d, want %d: %s", got, tc.journalReads, sql)
 			}
 			if !slices.Equal(statement.Vars, tc.args) {
 				t.Errorf("bound parameters = %#v, want %#v", statement.Vars, tc.args)

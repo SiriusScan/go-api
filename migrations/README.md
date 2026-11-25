@@ -75,3 +75,7 @@ Read [008 rollout and compatibility notes](008_host_port_state.md) before releas
 ## Source-specific vulnerability evidence
 
 Migration 009 preserves full findings per host/source. See [009_host_vulnerability_finding.md](009_host_vulnerability_finding.md) for compatibility, preflight, rollout, and isolated tests.
+
+## Accepted report history
+
+Migration 012 adds an ordered index for the live host journal. See [012_scan_history_journal.md](012_scan_history_journal.md) for rollout and PostgreSQL acceptance checks.
