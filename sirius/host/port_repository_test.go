@@ -64,6 +64,7 @@ func portFixture(t *testing.T) *HostRepository {
 		 created_at timestamptz, updated_at timestamptz, deleted_at timestamptz, UNIQUE(number, protocol)) ON COMMIT DROP`,
 		`CREATE TEMP TABLE host_ports (host_id bigint REFERENCES hosts(id), port_id bigint REFERENCES ports(id), source text NOT NULL,
 		 source_version text, first_seen timestamptz, last_seen timestamptz, status text, notes text, state text NOT NULL DEFAULT 'unknown',
+		 service_name text NOT NULL DEFAULT '', service_product text NOT NULL DEFAULT '', service_version text NOT NULL DEFAULT '', service_extrainfo text NOT NULL DEFAULT '',
 		 PRIMARY KEY(host_id, port_id, source)) ON COMMIT DROP`,
 		`CREATE TEMP TABLE vulnerabilities (id bigint, v_id text, title text, description text, risk_score double precision,
 		 created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
@@ -239,5 +240,75 @@ func TestPortObservationKeepsProtocolIdentity(t *testing.T) {
 	}
 	if port.Protocol != "TCP" {
 		t.Fatalf("protocol changed: %s", port.Protocol)
+	}
+}
+
+func TestPortServicePersistsIndependentlyOfFindings(t *testing.T) {
+	repo := portFixture(t)
+	nmap := models.ScanSource{Name: "nmap", Version: "7.95", Config: "Ports: 111,3128,8006,8009"}
+	naabu := models.ScanSource{Name: "naabu", Version: "2.3.0"}
+
+	svc := PortService{
+		Name:      "http-proxy",
+		Product:   "Squid http proxy",
+		Version:   "5.7",
+		ExtraInfo: "Ubuntu",
+	}
+	if err := repo.UpsertHostPortWithService(1, 3128, "tcp", "open", svc, nmap); err != nil {
+		t.Fatal(err)
+	}
+	// A subsequent port-only discovery source (naabu) must not erase nmap's service info.
+	if err := repo.UpsertHostPort(1, 3128, "tcp", "open", naabu); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Exec("UPDATE host_ports SET last_seen = ? WHERE host_id=1 AND source='naabu'", time.Now().Add(time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Reading per-source port records preserves nmap's service fields while keeping naabu empty.
+	sources, err := repo.getPortSources(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 port sources, got %+v", sources)
+	}
+	bySource := make(map[string]models.PortWithSource, 2)
+	for _, s := range sources {
+		bySource[s.Source] = s
+	}
+	if bySource["nmap"].ServiceName != "http-proxy" || bySource["nmap"].ServiceProduct != "Squid http proxy" || bySource["nmap"].ServiceVersion != "5.7" || bySource["nmap"].ServiceExtraInfo != "Ubuntu" {
+		t.Fatalf("unexpected nmap port service: %+v", bySource["nmap"])
+	}
+	if bySource["naabu"].ServiceName != "" || bySource["naabu"].ServiceProduct != "" {
+		t.Fatalf("naabu port should not inherit nmap service in source row: %+v", bySource["naabu"])
+	}
+
+	// Deduplicated host read preserves nmap's service info even when naabu has a newer last_seen.
+	h, err := repo.GetHostWithRelations("192.0.2.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := convertHostWithRelationsToSiriusHost(h)
+	if len(sh.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %+v", sh.Ports)
+	}
+	got := sh.Ports[0]
+	if got.Number != 3128 || got.ServiceName != "http-proxy" || got.ServiceProduct != "Squid http proxy" || got.ServiceVersion != "5.7" || got.ServiceExtraInfo != "Ubuntu" {
+		t.Fatalf("converted sirius.Port lost service metadata: %+v", got)
+	}
+
+	// Re-upserting nmap with empty service fields must not wipe previously detected service fields.
+	if err := repo.UpsertHostPort(1, 3128, "tcp", "open", nmap); err != nil {
+		t.Fatal(err)
+	}
+	sources2, err := repo.getPortSources(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sources2 {
+		if s.Source == "nmap" && s.ServiceProduct != "Squid http proxy" {
+			t.Fatalf("empty re-upsert cleared service metadata: %+v", s)
+		}
 	}
 }

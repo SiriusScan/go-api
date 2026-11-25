@@ -48,6 +48,10 @@ type VulnerabilityWithSource struct {
 type PortWithSource struct {
 	Port
 	SourceAttribution
+	ServiceName      string `json:"service_name,omitempty"`
+	ServiceProduct   string `json:"service_product,omitempty"`
+	ServiceVersion   string `json:"service_version,omitempty"`
+	ServiceExtraInfo string `json:"service_extrainfo,omitempty" gorm:"column:service_extrainfo"`
 }
 
 // ScanHistory represents the timeline of scans for a host

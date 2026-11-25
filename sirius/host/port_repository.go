@@ -43,9 +43,36 @@ func (r *HostRepository) UpsertPort(number int, protocol, state string) (uint, e
 	return port.ID, nil
 }
 
+// PortService carries per-host, per-source service identification observed on a port.
+type PortService struct {
+	Name      string
+	Product   string
+	Version   string
+	ExtraInfo string
+}
+
+func (s PortService) normalized() PortService {
+	return PortService{
+		Name:      strings.TrimSpace(s.Name),
+		Product:   strings.TrimSpace(s.Product),
+		Version:   strings.TrimSpace(s.Version),
+		ExtraInfo: strings.TrimSpace(s.ExtraInfo),
+	}
+}
+
+func (s PortService) isEmpty() bool {
+	return s.Name == "" && s.Product == "" && s.Version == "" && s.ExtraInfo == ""
+}
+
 // UpsertHostPort atomically saves an observation scoped to host and source.
 // An omitted scanner state retains the historical default of open.
 func (r *HostRepository) UpsertHostPort(hostID uint, number int, protocol, state string, source models.ScanSource) error {
+	return r.UpsertHostPortWithService(hostID, number, protocol, state, PortService{}, source)
+}
+
+// UpsertHostPortWithService atomically saves a host/source port observation
+// along with optional service identification metadata.
+func (r *HostRepository) UpsertHostPortWithService(hostID uint, number int, protocol, state string, svc PortService, source models.ScanSource) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection not available")
 	}
@@ -58,7 +85,7 @@ func (r *HostRepository) UpsertHostPort(hostID uint, number int, protocol, state
 		if err != nil {
 			return err
 		}
-		return repo.LinkHostPortWithState(hostID, portID, source, state)
+		return repo.LinkHostPortWithService(hostID, portID, source, state, svc)
 	})
 }
 
@@ -66,34 +93,48 @@ func (r *HostRepository) UpsertHostPort(hostID uint, number int, protocol, state
 // Existing state is preserved; a new relationship has unknown state.
 // Deprecated: use UpsertHostPort or LinkHostPortWithState for observations.
 func (r *HostRepository) LinkHostPort(hostID, portID uint, source models.ScanSource) error {
-	return r.linkHostPort(hostID, portID, source, nil)
+	return r.linkHostPort(hostID, portID, source, nil, PortService{})
 }
 
 // LinkHostPortWithState updates only the specified host/port/source observation.
 func (r *HostRepository) LinkHostPortWithState(hostID, portID uint, source models.ScanSource, state string) error {
+	return r.LinkHostPortWithService(hostID, portID, source, state, PortService{})
+}
+
+// LinkHostPortWithService updates the specified host/port/source observation
+// and persists non-empty service metadata without clearing prior detections.
+func (r *HostRepository) LinkHostPortWithService(hostID, portID uint, source models.ScanSource, state string, svc PortService) error {
 	if state == "" {
 		state = "unknown"
 	}
-	return r.linkHostPort(hostID, portID, source, &state)
+	return r.linkHostPort(hostID, portID, source, &state, svc)
 }
 
-func (r *HostRepository) linkHostPort(hostID, portID uint, source models.ScanSource, state *string) error {
+func (r *HostRepository) linkHostPort(hostID, portID uint, source models.ScanSource, state *string, svc PortService) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection not available")
 	}
 	if strings.TrimSpace(source.Name) == "" {
 		source.Name = "unknown"
 	}
+	svc = svc.normalized()
 	now := time.Now()
 	observation := models.HostPort{
 		HostID: hostID, PortID: portID, Source: source.Name,
 		SourceVersion: source.Version, FirstSeen: now, LastSeen: now,
 		State: "unknown", Status: "active", Notes: source.Config,
+		ServiceName:      svc.Name,
+		ServiceProduct:   svc.Product,
+		ServiceVersion:   svc.Version,
+		ServiceExtraInfo: svc.ExtraInfo,
 	}
 	updates := []string{"source_version", "last_seen", "status", "notes"}
 	if state != nil {
 		observation.State = *state
 		updates = append(updates, "state")
+	}
+	if !svc.isEmpty() {
+		updates = append(updates, "service_name", "service_product", "service_version", "service_extrainfo")
 	}
 	if err := r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "host_id"}, {Name: "port_id"}, {Name: "source"}},
@@ -109,7 +150,11 @@ func (r *HostRepository) getPortSources(hostID uint) ([]models.PortWithSource, e
 	err := r.db.Table("host_ports hp").
 		Select(`p.id, p.number, p.protocol, p.created_at, p.updated_at, p.deleted_at,
 			COALESCE(NULLIF(hp.state, ''), 'unknown') AS state,
-			hp.source, hp.source_version, hp.first_seen, hp.last_seen, hp.status, hp.notes`).
+			hp.source, hp.source_version, hp.first_seen, hp.last_seen, hp.status, hp.notes,
+			COALESCE(hp.service_name, '') AS service_name,
+			COALESCE(hp.service_product, '') AS service_product,
+			COALESCE(hp.service_version, '') AS service_version,
+			COALESCE(hp.service_extrainfo, '') AS service_extrainfo`).
 		Joins("JOIN ports p ON hp.port_id = p.id").
 		Where("hp.host_id = ? AND p.deleted_at IS NULL", hostID).
 		Order("p.number, p.protocol, hp.source").Scan(&result).Error

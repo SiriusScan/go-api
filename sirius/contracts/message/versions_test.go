@@ -17,7 +17,7 @@ func TestPublishedVersionsMatchContracts(t *testing.T) {
 	if err := json.Unmarshal(data, &versions); err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]string{"resource_scope": scope.Version, "message_envelope": SpecVersion, "scan_job": ScanJobSchemaVersion, "scan_control": ScanControlSchemaVersion, "core_schema_latest": "010_host_resource_scope"} {
+	for key, want := range map[string]string{"resource_scope": scope.Version, "message_envelope": SpecVersion, "scan_job": ScanJobSchemaVersion, "scan_control": ScanControlSchemaVersion, "core_schema_latest": "011_host_port_service"} {
 		if versions[key] != want {
 			t.Fatalf("%s = %q, want %q", key, versions[key], want)
 		}

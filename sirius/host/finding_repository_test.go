@@ -68,7 +68,7 @@ func findingFixture(t *testing.T) *HostRepository {
 		`CREATE TEMP TABLE hosts (id bigint PRIMARY KEY, owner_subject_id text NOT NULL DEFAULT '', h_id text, ip text, hostname text, os text, os_version text, agent_id bigint,
           software_inventory jsonb, system_fingerprint jsonb, agent_metadata jsonb, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE ports (id bigint PRIMARY KEY, number int, protocol text, state text, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
-		`CREATE TEMP TABLE host_ports (host_id bigint, port_id bigint, source text, source_version text, first_seen timestamp, last_seen timestamp, status text, notes text, state text) ON COMMIT DROP`,
+		`CREATE TEMP TABLE host_ports (host_id bigint, port_id bigint, source text, source_version text, first_seen timestamp, last_seen timestamp, status text, notes text, state text, service_name text NOT NULL DEFAULT '', service_product text NOT NULL DEFAULT '', service_version text NOT NULL DEFAULT '', service_extrainfo text NOT NULL DEFAULT '') ON COMMIT DROP`,
 		`CREATE TEMP TABLE vulnerabilities (id bigserial PRIMARY KEY, v_id text UNIQUE, title text, description text, risk_score double precision, created_at timestamp, updated_at timestamp, deleted_at timestamp) ON COMMIT DROP`,
 		`CREATE TEMP TABLE host_vulnerabilities (host_id bigint REFERENCES hosts(id), vulnerability_id bigint REFERENCES vulnerabilities(id), source text,
           source_version text, first_seen timestamp, last_seen timestamp, status text, confidence double precision DEFAULT 1.0, port int, service_info text, notes text, finding jsonb,

@@ -111,15 +111,19 @@ func (p *Port) String() string {
 // the state column so baseline AutoMigrate cannot prefill legacy rows before
 // their state is backfilled from the old catalog.
 type HostPort struct {
-	HostID        uint      `json:"host_id" gorm:"primaryKey"`
-	PortID        uint      `json:"port_id" gorm:"primaryKey"`
-	State         string    `json:"state" gorm:"-:migration"`                          // Per-host, per-source observation
-	Source        string    `json:"source" gorm:"primaryKey;not null;default:unknown"` // "nmap", "agent", "manual", "rustscan"
-	SourceVersion string    `json:"source_version"`                                    // Scanner version/build
-	FirstSeen     time.Time `json:"first_seen"`                                        // When first detected
-	LastSeen      time.Time `json:"last_seen"`                                         // When last confirmed
-	Status        string    `json:"status" gorm:"default:active"`                      // "active", "resolved", "false_positive"
-	Notes         string    `json:"notes,omitempty"`                                   // Additional context
+	HostID           uint      `json:"host_id" gorm:"primaryKey"`
+	PortID           uint      `json:"port_id" gorm:"primaryKey"`
+	State            string    `json:"state" gorm:"-:migration"`                          // Per-host, per-source observation
+	Source           string    `json:"source" gorm:"primaryKey;not null;default:unknown"` // "nmap", "agent", "manual", "rustscan"
+	SourceVersion    string    `json:"source_version"`                                    // Scanner version/build
+	FirstSeen        time.Time `json:"first_seen"`                                        // When first detected
+	LastSeen         time.Time `json:"last_seen"`                                         // When last confirmed
+	Status           string    `json:"status" gorm:"default:active"`                      // "active", "resolved", "false_positive"
+	Notes            string    `json:"notes,omitempty"`                                   // Additional context
+	ServiceName      string    `json:"service_name,omitempty" gorm:"-:migration"`         // Migration 011: detected service name
+	ServiceProduct   string    `json:"service_product,omitempty" gorm:"-:migration"`      // Migration 011: product banner
+	ServiceVersion   string    `json:"service_version,omitempty" gorm:"-:migration"`      // Migration 011: product version
+	ServiceExtraInfo string    `json:"service_extrainfo,omitempty" gorm:"column:service_extrainfo;-:migration"` // Migration 011: extra version info
 }
 
 type Service struct {
