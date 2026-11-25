@@ -82,6 +82,11 @@ func TestAcceptedReportHistoryPostgresPlans(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	db = db.WithContext(ctx)
+	var version string
+	if err := db.Raw("SHOW server_version").Scan(&version).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("PostgreSQL %s", version)
 
 	var applyIndex func(*gorm.DB) error
 	for _, step := range migrate.Migrations() {
@@ -118,10 +123,11 @@ func TestAcceptedReportHistoryPostgresPlans(t *testing.T) {
 	alice := scope.ForSubject("alice")
 	cursorAt := func(query string) *acceptedReportCursor {
 		t.Helper()
-		cursor := acceptedReportCursor{HostID: 1}
+		var cursor acceptedReportCursor
 		if err := db.Raw(query).Scan(&cursor).Error; err != nil || cursor.ReportID == 0 {
 			t.Fatalf("fixture cursor = %+v, error = %v", cursor, err)
 		}
+		cursor.HostID = 1
 		return &cursor
 	}
 	dated := cursorAt(`SELECT id AS report_id, scan_time AS accepted_at FROM scan_history_entries
@@ -185,17 +191,29 @@ func TestAcceptedReportHistoryPostgresPlans(t *testing.T) {
 			}
 			pages = append(pages, page)
 		}
-		return pages
+		bob, err := repo.ListAcceptedReportHistory(ctx, scope.ForSubject("bob"), ip, limit, "")
+		if err != nil || bob.HostID != 2 || len(bob.Reports) != limit {
+			t.Fatalf("before=%t other scope page = %+v, error = %v", before, bob, err)
+		}
+		for _, report := range bob.Reports {
+			if report.ID%8 != 2 {
+				t.Fatalf("before=%t other scope saw report %d", before, report.ID)
+			}
+		}
+		return append(pages, bob)
 	}
 
 	before := plansAndPages(true)
 	if err := db.Transaction(applyIndex); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("ANALYZE scan_history_entries").Error; err != nil {
+		t.Fatal(err)
+	}
 	after := plansAndPages(false)
-	for i := range cases {
-		if !reflect.DeepEqual(before[i], after[i]) {
-			t.Errorf("%s page or cursor changed\nbefore = %+v\nafter = %+v", cases[i].name, before[i], after[i])
+	for i, page := range before {
+		if !reflect.DeepEqual(page, after[i]) {
+			t.Errorf("scenario %d page or cursor changed\nbefore = %+v\nafter = %+v", i, page, after[i])
 		}
 	}
 }
