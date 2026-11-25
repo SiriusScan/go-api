@@ -59,6 +59,10 @@ retry. Future steps must use transactional PostgreSQL statements or define a
 separate recovery protocol first. Go callers can use `migrate.UpContext` to
 bound the time spent acquiring locks and applying pending steps.
 
+Go services can use `migrate.VerifyContext` before startup to check the required
+versions with read-only queries. A missing ledger or version returns a
+`*migrate.PendingVersionsError` with the ordered missing versions.
+
 ## Host/source port state
 
 Migration 008 requires a coordinated writer upgrade and an affected-host rescan.
