@@ -27,6 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: 9e0b8e2a4d21836d0932930b02deac8d1a4baf1a
+          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
