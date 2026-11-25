@@ -19,6 +19,8 @@ For the first upgrade to a build with core migration locking, stop all older
 processes that can run migrations against the target database. Run the new
 one-shot migrator by itself before starting upgraded services. Older migration
 binaries predate the lock and can otherwise run schema changes concurrently.
+The one-shot CLI gives migrations ten minutes by default. Pass `-timeout` with
+a Go duration, such as `-timeout=25m`, when a larger database needs more time.
 
 ## Local development
 
@@ -58,6 +60,12 @@ A failed step rolls back and leaves earlier committed versions available for a
 retry. Future steps must use transactional PostgreSQL statements or define a
 separate recovery protocol first. Go callers can use `migrate.UpContext` to
 bound the time spent acquiring locks and applying pending steps.
+
+Go services can use `migrate.VerifyContext` before startup to check the required
+versions with read-only queries. A missing ledger or version returns a
+`*migrate.PendingVersionsError` with the ordered missing versions. For a
+process launched with `SIRIUS_SCHEMA_MODE=verify`, the SDK also skips legacy
+on-connect AutoMigrate and reset, including when their environment flags are set.
 
 ## Host/source port state
 

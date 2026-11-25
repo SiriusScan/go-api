@@ -126,7 +126,18 @@ func up(ctx context.Context, db *gorm.DB, migrations []Migration) error {
 
 // UpFromDefault connects via postgres package and runs Up.
 func UpFromDefault() error {
+	return UpFromDefaultContext(context.Background())
+}
+
+// UpFromDefaultContext applies pending migrations on the default database.
+func UpFromDefaultContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	db := postgres.GetDB()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if db == nil {
 		err := postgres.GetConnectionError()
 		if err == nil {
@@ -134,7 +145,7 @@ func UpFromDefault() error {
 		}
 		return err
 	}
-	return Up(db)
+	return UpContext(ctx, db)
 }
 
 func ensureLedger(db *gorm.DB) error {

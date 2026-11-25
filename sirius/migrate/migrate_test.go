@@ -1,6 +1,8 @@
 package migrate
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -51,5 +53,14 @@ func TestVulnerabilityIndexUsesPersistedColumnName(t *testing.T) {
 	}
 	if strings.Contains(vulnerabilityVIDIndexSQL, "vulnerabilities(vid)") {
 		t.Fatalf("vulnerability index uses nonexistent column vid: %s", vulnerabilityVIDIndexSQL)
+	}
+}
+
+func TestUpFromDefaultContextReturnsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := UpFromDefaultContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled migration returned %v", err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
@@ -176,6 +177,10 @@ func connect() {
 // Set SIRIUS_SCHEMA_AUTO_MIGRATE=true for local/dev convenience only.
 // Set SIRIUS_SCHEMA_FORCE_RESET=true to drop all tables before AutoMigrate (tests only).
 func initializeSchema() {
+	if strings.TrimSpace(os.Getenv("SIRIUS_SCHEMA_MODE")) == "verify" {
+		slog.Info("Skipping schema AutoMigrate in verify mode")
+		return
+	}
 	autoMigrate := os.Getenv("SIRIUS_SCHEMA_AUTO_MIGRATE") == "true"
 	forceReset := os.Getenv("SIRIUS_SCHEMA_FORCE_RESET") == "true"
 
