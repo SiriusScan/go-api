@@ -62,17 +62,57 @@ func (r *HostRepository) upsertHostVulnerability(hostID uint, finding sirius.Vul
 		if err != nil {
 			return err
 		}
-		return tr.writeVulnerabilityObservation(hostID, id, source, snapshot, finding.Confidence)
+		port, serviceInfo := extractFindingPortService(finding.Metadata)
+		return tr.writeVulnerabilityObservation(hostID, id, source, snapshot, finding.Confidence, port, serviceInfo)
 	})
+}
+
+func extractFindingPortService(metadata map[string]interface{}) (*int, string) {
+	if len(metadata) == 0 {
+		return nil, ""
+	}
+	var portPtr *int
+	if raw, ok := metadata["port"]; ok && raw != nil {
+		var p int
+		switch v := raw.(type) {
+		case int:
+			p = v
+		case int64:
+			p = int(v)
+		case float64:
+			if v == math.Trunc(v) {
+				p = int(v)
+			}
+		case json.Number:
+			if parsed, err := v.Int64(); err == nil {
+				p = int(parsed)
+			}
+		}
+		if p > 0 && p <= 65535 {
+			portPtr = &p
+		}
+	}
+	var serviceInfo string
+	for _, key := range []string{"service_info", "service"} {
+		if raw, ok := metadata[key]; ok {
+			if s, ok := raw.(string); ok {
+				if trimmed := strings.TrimSpace(s); trimmed != "" {
+					serviceInfo = trimmed
+					break
+				}
+			}
+		}
+	}
+	return portPtr, serviceInfo
 }
 
 // LinkHostVulnerability is the compatibility API for callers without a complete
 // finding. It must not erase evidence/confidence from an existing modern report.
 func (r *HostRepository) LinkHostVulnerability(hostID, vulnID uint, source models.ScanSource) error {
-	return r.writeVulnerabilityObservation(hostID, vulnID, source, nil, 1)
+	return r.writeVulnerabilityObservation(hostID, vulnID, source, nil, 1, nil, "")
 }
 
-func (r *HostRepository) writeVulnerabilityObservation(hostID, vulnID uint, source models.ScanSource, finding models.FindingJSON, confidence float64) error {
+func (r *HostRepository) writeVulnerabilityObservation(hostID, vulnID uint, source models.ScanSource, finding models.FindingJSON, confidence float64, port *int, serviceInfo string) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection not available")
 	}
@@ -90,6 +130,14 @@ func (r *HostRepository) writeVulnerabilityObservation(hostID, vulnID uint, sour
 	if finding != nil {
 		row["finding"] = finding
 		columns = append(columns, "finding", "confidence")
+	}
+	if port != nil {
+		row["port"] = *port
+		columns = append(columns, "port")
+	}
+	if serviceInfo != "" {
+		row["service_info"] = serviceInfo
+		columns = append(columns, "service_info")
 	}
 	return r.db.Table("host_vulnerabilities").Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "host_id"}, {Name: "vulnerability_id"}, {Name: "source"}},

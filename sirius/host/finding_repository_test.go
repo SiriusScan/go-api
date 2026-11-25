@@ -380,3 +380,30 @@ func TestFindingPreservesNumericEvidence(t *testing.T) {
 		t.Fatalf("number changed: %s", stored.Finding)
 	}
 }
+
+func TestFindingPersistsPortAndServiceInfoFromMetadata(t *testing.T) {
+	repo := findingFixture(t)
+	finding := fullFinding()
+	finding.Metadata = map[string]interface{}{
+		"port":         8080,
+		"protocol":     "tcp",
+		"service_info": "http (Apache Tomcat 8.5.19)",
+		"evidence":     "cpe:/a:apache:tomcat:8.5.19 CVE-TEST-9 7.5 https://vulners.com/cve/CVE-TEST-9",
+	}
+	if err := repo.UpsertHostVulnerability(1, finding, models.ScanSource{Name: "nmap", Version: "7.95"}); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := repo.getVulnerabilitySources(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources))
+	}
+	if sources[0].Port == nil || *sources[0].Port != 8080 {
+		t.Fatalf("expected port 8080, got %+v", sources[0].Port)
+	}
+	if sources[0].ServiceInfo != "http (Apache Tomcat 8.5.19)" {
+		t.Fatalf("expected service_info 'http (Apache Tomcat 8.5.19)', got %q", sources[0].ServiceInfo)
+	}
+}
