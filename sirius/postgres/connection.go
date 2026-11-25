@@ -2,14 +2,19 @@
 package postgres
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/SiriusScan/go-api/sirius/postgres/models"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -21,82 +26,6 @@ var (
 	isInitialized   bool
 	connectionError error
 )
-
-// Database configuration
-// const (
-// 	maxRetries = 5
-// 	retryDelay = 3 * time.Second
-// )
-
-// getConnectionString returns the appropriate connection string based on environment
-func getConnectionString() string {
-	// Check for environment variables (try both DB_ and POSTGRES_ prefixes)
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" {
-		dbHost = os.Getenv("POSTGRES_HOST")
-	}
-
-	if dbHost != "" {
-		dbUser := os.Getenv("DB_USER")
-		if dbUser == "" {
-			dbUser = os.Getenv("POSTGRES_USER")
-			if dbUser == "" {
-				dbUser = "postgres"
-			}
-		}
-
-		dbPassword := os.Getenv("DB_PASSWORD")
-		if dbPassword == "" {
-			dbPassword = os.Getenv("POSTGRES_PASSWORD")
-			if dbPassword == "" {
-				dbPassword = "postgres"
-			}
-		}
-
-		dbName := os.Getenv("DB_NAME")
-		if dbName == "" {
-			dbName = os.Getenv("POSTGRES_DB")
-			if dbName == "" {
-				dbName = "sirius"
-			}
-		}
-
-		dbPort := os.Getenv("DB_PORT")
-		if dbPort == "" {
-			dbPort = os.Getenv("POSTGRES_PORT")
-			if dbPort == "" {
-				dbPort = "5432"
-			}
-		}
-
-		dbSSLMode := os.Getenv("DB_SSLMODE")
-		if dbSSLMode == "" {
-			dbSSLMode = os.Getenv("POSTGRES_SSLMODE")
-			if dbSSLMode == "" {
-				dbSSLMode = "disable"
-			}
-		}
-
-		connectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-			dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode)
-
-		slog.Info("Using environment variables for database connection", "host", dbHost, "dbname", dbName, "user", dbUser, "port", dbPort)
-
-		return connectionString
-	}
-
-	// Default to auto-detection: If we're running in a container, use the container hostname
-	// otherwise use localhost
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		// We're in a container, use the service name
-		slog.Info("Detected container environment, using sirius-postgres hostname")
-		return "host=sirius-postgres user=postgres password=postgres dbname=sirius port=5432 sslmode=disable"
-	}
-
-	// We're on the host, use localhost
-	slog.Info("Detected host environment, using localhost")
-	return "host=localhost user=postgres password=postgres dbname=sirius port=5432 sslmode=disable"
-}
 
 // init initializes the database connection
 func init() {
@@ -122,8 +51,6 @@ func connectWithRetries() {
 
 // connect attempts to establish a connection to the database
 func connect() {
-	var err error
-
 	// Configure custom logger to avoid excessive logging
 	newLogger := logger.New(
 		log.New(log.Writer(), "[DB] ", log.LstdFlags),
@@ -135,30 +62,13 @@ func connect() {
 		},
 	)
 
-	// Get appropriate connection string
-	pgConnString := getConnectionString()
-
-	// Connect to PostgreSQL database (connection string intentionally omitted from logs)
-	slog.Info("Connecting to PostgreSQL database...")
-	db, err = gorm.Open(postgres.Open(pgConnString), &gorm.Config{
-		Logger: newLogger,
-	})
-
-	if err == nil {
-		// Configure connection pool to prevent leaks
-		sqlDB, err := db.DB()
-		if err == nil {
-			// Set connection pool settings
-			sqlDB.SetMaxOpenConns(25)                 // Maximum number of open connections
-			sqlDB.SetMaxIdleConns(10)                 // Maximum number of idle connections
-			sqlDB.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
-			sqlDB.SetConnMaxIdleTime(1 * time.Minute) // Maximum idle time before closing
-			slog.Info("Database connection pool configured")
-		}
-	}
-
+	settings := connectionSettingsFromEnv()
+	slog.Info("Connecting to PostgreSQL database", "host", settings.host, "port", settings.port,
+		"dbname", settings.database, "sslmode", settings.sslMode)
+	conn, err := openConnection(settings, newLogger)
+	db = conn
 	if err != nil {
-		connectionError = fmt.Errorf("failed to connect to database: %w", err)
+		connectionError = err
 		isInitialized = false
 		return
 	}
@@ -170,6 +80,55 @@ func connect() {
 
 	// Initialize database schema
 	initializeSchema()
+}
+
+func openConnection(settings connectionSettings, dbLogger logger.Interface) (*gorm.DB, error) {
+	config, err := settings.pgxConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB := stdlib.OpenDB(*config)
+	// GORM logs failed startup pings verbatim. Use the normal logger once the pool is ready.
+	conn, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		Logger: dbLogger.LogMode(logger.Silent),
+	})
+	if err != nil {
+		_ = sqlDB.Close()
+		return nil, connectionFailure(err)
+	}
+	conn.Logger = dbLogger
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(time.Minute)
+	slog.Info("Database connection pool configured")
+	return conn, nil
+}
+
+// connectionFailure translates driver errors into diagnostics safe for startup logs.
+func connectionFailure(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "28000", "28P01":
+			return errors.New("PostgreSQL rejected authentication. Check the configured role, password and server authentication rules")
+		case "3D000":
+			return errors.New("PostgreSQL database does not exist. Check DB_NAME or POSTGRES_DB")
+		}
+	}
+
+	var dnsErr *net.DNSError
+	switch {
+	case errors.As(err, &dnsErr):
+		return errors.New("could not resolve the PostgreSQL host. Check DB_HOST or POSTGRES_HOST and DNS")
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return errors.New("PostgreSQL refused the connection. Check the server is listening on the configured host and port")
+	case pgconn.Timeout(err):
+		return errors.New("PostgreSQL connection timed out. Check network access and server availability")
+	default:
+		return errors.New("failed to connect to PostgreSQL. Check server availability, host, port and TLS settings")
+	}
 }
 
 // initializeSchema optionally applies GORM AutoMigrate on connect.
