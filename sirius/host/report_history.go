@@ -138,7 +138,15 @@ func acceptedReportHistoryQuery(
 		if position.AcceptedAt == nil {
 			journal = journal.Where("entry.scan_time IS NULL AND entry.id < ?", position.ReportID)
 		} else {
-			journal = journal.Where("((entry.scan_time, entry.id) < (?, ?) OR entry.scan_time IS NULL)", *position.AcceptedAt, position.ReportID)
+			// Seek into the dated range and the NULL tail independently. Each
+			// branch can stop after one page in the journal index.
+			dated := journal.Session(&gorm.Session{}).
+				Where("(entry.scan_time, entry.id) < (?, ?)", *position.AcceptedAt, position.ReportID)
+			undated := journal.Session(&gorm.Session{}).
+				Where("entry.scan_time IS NULL")
+			journal = db.Table("((?) UNION ALL (?)) AS candidate", dated, undated).
+				Order("candidate.accepted_at DESC NULLS LAST, candidate.report_id DESC").
+				Limit(limit + 1)
 		}
 	}
 
