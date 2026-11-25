@@ -19,6 +19,8 @@ For the first upgrade to a build with core migration locking, stop all older
 processes that can run migrations against the target database. Run the new
 one-shot migrator by itself before starting upgraded services. Older migration
 binaries predate the lock and can otherwise run schema changes concurrently.
+The one-shot CLI gives migrations ten minutes by default. Pass `-timeout` with
+a Go duration, such as `-timeout=25m`, when a larger database needs more time.
 
 ## Local development
 
