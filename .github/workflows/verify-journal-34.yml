@@ -1,0 +1,44 @@
+name: Verify journal seeks on PostgreSQL 15
+
+on:
+  push:
+    branches: [codex/verify-34-scan-history]
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: fixture
+          POSTGRES_DB: fixture
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SIRIUS_REPORT_TEST_DSN: postgres://postgres:fixture@127.0.0.1:5432/fixture?sslmode=disable
+      SIRIUS_PORT_TEST_DSN: postgres://postgres:fixture@127.0.0.1:5432/fixture?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9e0b8e2a4d21836d0932930b02deac8d1a4baf1a
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.1
+          cache: true
+      - name: Check exact candidate
+        run: |
+          git rev-parse HEAD
+          git diff --check HEAD^ HEAD
+          gofmt -d sirius/host/report_history.go sirius/host/report_history_test.go sirius/host/report_history_postgres_test.go sirius/migrate/scan_history_journal.go sirius/migrate/scan_history_journal_test.go
+      - name: PostgreSQL plans and scoped reads
+        run: go test -count=1 -v ./sirius/host -run '^TestAcceptedReportHistory'
+      - name: PostgreSQL migration and cancellation
+        if: success() || failure()
+        run: go test -count=1 -v ./sirius/migrate -run '^Test(ScanHistoryJournalMigration|MigrationRunnerConcurrent|MigrationsAreOrdered)'
