@@ -241,8 +241,8 @@ func (r *HostRepository) GetHostWithRelationsScoped(resourceScope scope.Resource
 
 	// First, get the host basic info
 	var host models.Host
-	err := r.db.Select("id, owner_subject_id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
-		Where("ip = ? AND owner_subject_id = ?", ip, resourceScope.OwnerSubjectID).
+	err := hostByScopedIP(r.db, resourceScope, ip).
+		Select("id, owner_subject_id, h_id, os, os_version, ip, hostname, agent_id, software_inventory, system_fingerprint, agent_metadata, created_at, updated_at, deleted_at").
 		First(&host).Error
 	if err != nil {
 		return nil, fmt.Errorf("host not found: %w", err)
