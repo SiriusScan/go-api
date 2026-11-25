@@ -188,6 +188,9 @@ type VulnerabilitySummary struct {
 	ScanSource  string  `json:"scan_source,omitempty"`
 	HostID      string  `json:"host_id,omitempty"`
 	AgentID     string  `json:"agent_id,omitempty"`
+	Port        int     `json:"port,omitempty"`
+	Protocol    string  `json:"protocol,omitempty"`
+	ServiceInfo string  `json:"service_info,omitempty"`
 }
 
 // HostEntry represents a discovered host with canonical IP identity.
