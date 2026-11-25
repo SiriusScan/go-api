@@ -135,6 +135,9 @@ func UpFromDefaultContext(ctx context.Context) error {
 		return err
 	}
 	db := postgres.GetDB()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if db == nil {
 		err := postgres.GetConnectionError()
 		if err == nil {
