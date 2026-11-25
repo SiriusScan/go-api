@@ -21,8 +21,9 @@ func columnExists(db *gorm.DB, table, column string) (bool, error) {
 	var exists bool
 	err := db.Raw(`
 		SELECT EXISTS (
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+			SELECT 1 FROM pg_catalog.pg_attribute
+			WHERE attrelid = pg_catalog.to_regclass(?) AND attname = ?
+				AND attnum > 0 AND NOT attisdropped
 		)
 	`, table, column).Scan(&exists).Error
 	return exists, err
@@ -123,7 +124,7 @@ func apply005(db *gorm.DB) error {
 	}
 	if !hasNumber {
 		var tableExists bool
-		if err := db.Raw(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='ports')`).Scan(&tableExists).Error; err != nil {
+		if err := db.Raw(`SELECT pg_catalog.to_regclass('ports') IS NOT NULL`).Scan(&tableExists).Error; err != nil {
 			return err
 		}
 		if tableExists {
