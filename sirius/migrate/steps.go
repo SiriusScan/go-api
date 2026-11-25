@@ -134,13 +134,12 @@ func apply005(db *gorm.DB) error {
 				`ALTER TABLE ports DROP CONSTRAINT IF EXISTS ports_pkey CASCADE`,
 				`ALTER TABLE ports RENAME COLUMN id TO number`,
 				`ALTER TABLE ports ADD COLUMN IF NOT EXISTS id SERIAL`,
+				`ALTER TABLE ports ADD PRIMARY KEY (id)`,
+				`ALTER TABLE ports ADD CONSTRAINT unique_port_number_protocol UNIQUE (number, protocol)`,
 			}
 			if err := execAll(db, stmts); err != nil {
 				return fmt.Errorf("ports id/number migration: %w", err)
 			}
-			// Ensure primary key on id
-			_ = db.Exec(`ALTER TABLE ports ADD PRIMARY KEY (id)`).Error
-			_ = db.Exec(`ALTER TABLE ports ADD CONSTRAINT unique_port_number_protocol UNIQUE (number, protocol)`).Error
 		}
 	}
 

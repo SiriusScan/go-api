@@ -15,6 +15,11 @@ DB_HOST=sirius-postgres DB_USER=postgres DB_PASSWORD=... DB_NAME=sirius \
   ./migrate
 ```
 
+For the first upgrade to a build with core migration locking, stop all older
+processes that can run migrations against the target database. Run the new
+one-shot migrator by itself before starting upgraded services. Older migration
+binaries predate the lock and can otherwise run schema changes concurrently.
+
 ## Local development
 
 ```bash
@@ -46,6 +51,13 @@ applies equivalent idempotent steps (`001_baseline` … `008_host_port_state`).
 | `schema_migrations_core` | Versions applied for Community/core schema |
 
 Pro editions use a separate `schema_migrations_pro` ledger (not in this repo).
+
+The core migrator takes a PostgreSQL transaction-scoped lock for each version
+before checking the ledger. The pending step and its ledger row commit together.
+A failed step rolls back and leaves earlier committed versions available for a
+retry. Future steps must use transactional PostgreSQL statements or define a
+separate recovery protocol first. Go callers can use `migrate.UpContext` to
+bound the time spent acquiring locks and applying pending steps.
 
 ## Host/source port state
 
