@@ -31,7 +31,33 @@ values. Each accepted report creates a new history event. This is not an
 exactly-once request API: a client retry after a lost commit acknowledgment can
 create another history event, but not another identity/observation.
 
+## Reading accepted report history
+
+`host.NewHostRepository().ListAcceptedReportHistory(ctx, resourceScope, ip, limit,
+cursor)` reads the journal using a caller-authorized resource scope and a host IP.
+Use `DefaultAcceptedReportLimit` for an unspecified page size. A subsequent
+request uses the previous page's `next_cursor` for the same host. Reports are
+ordered by accepted time and then by descending row ID, with undated entries
+last. A missing or inaccessible host returns `gorm.ErrRecordNotFound`, and an
+accessible host with no entries returns an empty list.
+
+The read DTO calls the legacy `findings_count` column `submitted_item_count`.
+That value counts submitted port and vulnerability entries and up to one software
+inventory and fingerprint contribution each. Zero records an accepted empty
+submission. A missing historical count or timestamp is `null`. Assessment
+coverage is always `unknown` for these journal rows. Config and notes are
+excluded from the default read.
+
+The read applies its page limit in SQL and returns discovery metadata without
+loading host relationships. It runs against the existing journal schema. A
+composite index on host ID, accepted time and row ID can be added separately
+if large retained journals require it.
+
 ## Regression checks
+
+Run the offline query and projection checks with
+`go test ./sirius/host -run TestAcceptedReportHistory`. Set
+`SIRIUS_REPORT_TEST_DSN` to enable the accompanying history query fixture.
 
 Use a disposable PostgreSQL instance, never an installed Sirius database:
 
